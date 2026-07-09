@@ -1,0 +1,21 @@
+experiment_name: nslkdd_multiplicity
+run_dir: runs/nslkdd_multiplicity
+
+dataset:
+  name: nsl_kdd
+  raw_dir: data/raw/nsl-kdd
+  task: binary
+  test_size: 0.2
+
+training:
+  seeds: [1, 2, 3, 4, 5]
+  subset_fractions: [1.0, 0.75, 0.5]
+  subset_strategy: stratified
+  epochs: 20
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  hidden_dims: [128, 64]
+  dropout: 0.2
+  patience: 5
+  device: auto
