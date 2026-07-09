@@ -10,28 +10,65 @@ The default dataset is **NSL-KDD** -> small, public, and fast enough for first e
 
 ## Setup
 
+Clone the repository somewhere local on your machine first:
+
 ```bash
-cd /data/.openclaw/workspace/model-multiplicity-cyber
-python -m venv .venv
+git clone git@github.com:siljakluge/model-multiplicity-cyberdef.git
+cd model-multiplicity-cyberdef
+```
+
+If SSH is not set up on that machine, use HTTPS instead:
+
+```bash
+git clone https://github.com/siljakluge/model-multiplicity-cyberdef.git
+cd model-multiplicity-cyberdef
+```
+
+Create a virtual environment and install the requirements:
+
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
+python -m pip install -e . --no-deps
+```
+
+If `python3` points to an old Python on the iMac, use a Python 3.10+ interpreter explicitly, for example:
+
+```bash
+python3.11 -m venv .venv
+```
+
+The commands below use `python -m mmcyber.cli` instead of the shorter `mmcyber` executable. That is a bit more verbose, but it works reliably as long as the virtual environment is active.
+
+Check the installation:
+
+```bash
+python -m mmcyber.cli --help
 ```
 
 ## Run a Small Experiment
 
 ```bash
-mmcyber train --config configs/default.yaml
-mmcyber disagree --run-dir runs/nslkdd_multiplicity --rashomon-tolerance 0.015
-mmcyber shap --run-dir runs/nslkdd_multiplicity --max-background 128 --max-explain 256 --only-conflicts
-mmcyber explain-disagree --run-dir runs/nslkdd_multiplicity --top-k 20
-mmcyber plot --run-dir runs/nslkdd_multiplicity --top-n 20
+python -m mmcyber.cli train --config configs/default.yaml
+python -m mmcyber.cli disagree --run-dir runs/nslkdd_multiplicity --rashomon-tolerance 0.015
+python -m mmcyber.cli shap --run-dir runs/nslkdd_multiplicity --max-background 128 --max-explain 256 --only-conflicts
+python -m mmcyber.cli explain-disagree --run-dir runs/nslkdd_multiplicity --top-k 20
+python -m mmcyber.cli plot --run-dir runs/nslkdd_multiplicity --top-n 20
 ```
 
 For a quicker smoke test:
 
 ```bash
-mmcyber train --config configs/default.yaml --seeds 1 2 --subset-fractions 0.4
+python -m mmcyber.cli train --config configs/smoke.yaml
+python -m mmcyber.cli disagree --run-dir runs/nslkdd_smoke --rashomon-tolerance 1.0
+python -m mmcyber.cli shap --run-dir runs/nslkdd_smoke --max-background 8 --max-explain 8 --only-conflicts
+python -m mmcyber.cli explain-disagree --run-dir runs/nslkdd_smoke --top-k 5
+python -m mmcyber.cli plot --run-dir runs/nslkdd_smoke --top-n 5
 ```
+
+The NSL-KDD files are downloaded automatically into `data/raw/nsl-kdd/` on the first run. `data/` and `runs/` are intentionally not committed.
 
 ## Outputs
 
