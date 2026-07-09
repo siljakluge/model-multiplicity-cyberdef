@@ -6,7 +6,7 @@ This is a small research scaffold for studying model multiplicity in intrusion d
 - accuracy/F1 variability
 - SHAP explanation variability
 
-The default dataset is **NSL-KDD**. It is not state of the art, but it is small, public, and fast enough for first experiments. For a stronger study, swap in UNSW-NB15 or CIC-IDS2017/2018 later.
+The default dataset is **NSL-KDD** -> small, public, and fast enough for first experiments. For a stronger study, plan is to swap in UNSW-NB15 or CIC-IDS2017/2018 later.
 
 ## Setup
 
@@ -70,4 +70,4 @@ Useful knobs:
 - `subset_strategy`: currently `stratified`, preserving class balance as far as possible
 - `task`: `binary` maps attacks vs normal; `multiclass` keeps attack categories
 
-Start with binary classification. Multiclass works but needs more care when comparing explanations across rare classes.
+Started with binary classification. Multiclass works but needs more care when comparing explanations across rare classes.
