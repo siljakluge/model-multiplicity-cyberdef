@@ -103,6 +103,35 @@ def plot_decision_disagreement(run_dir: str | Path, out_dir: str | Path | None =
     _save(fig, out_path / "majority_fraction.png")
     plt.close(fig)
 
+    if "conflict_ratio" in sample.columns:
+        fig, ax = plt.subplots(figsize=(7, 4.5))
+        sns.histplot(data=sample, x="conflict_ratio", bins=30, ax=ax)
+        ax.set_title("Per-Sample Conflict Ratio")
+        ax.set_xlabel("conflict ratio")
+        ax.set_ylabel("sample count")
+        _save(fig, out_path / "conflict_ratio.png")
+        plt.close(fig)
+
+    summary_path = run_path / "multiplicity_summary.csv"
+    if summary_path.exists():
+        summary = pd.read_csv(summary_path)
+        value_vars = [
+            "ambiguity",
+            "mean_conflict_ratio",
+            "max_conflict_ratio",
+            "mean_pairwise_disagreement",
+            "max_pairwise_disagreement",
+        ]
+        plot_frame = summary.melt(value_vars=value_vars, var_name="metric", value_name="value")
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        sns.barplot(data=plot_frame, x="metric", y="value", ax=ax)
+        ax.set_title("Multiplicity Summary")
+        ax.set_xlabel("metric")
+        ax.set_ylabel("value")
+        ax.tick_params(axis="x", rotation=30)
+        _save(fig, out_path / "multiplicity_summary.png")
+        plt.close(fig)
+
 
 def plot_shap(run_dir: str | Path, out_dir: str | Path | None = None, top_n: int = 20) -> None:
     plt, sns = _setup_matplotlib()
@@ -149,8 +178,62 @@ def plot_explanation_disagreement(run_dir: str | Path, out_dir: str | Path | Non
         plt.close(fig)
 
 
+def plot_shap_variability(run_dir: str | Path, out_dir: str | Path | None = None, top_n: int = 20) -> None:
+    plt, sns = _setup_matplotlib()
+    run_path = Path(run_dir)
+    out_path = Path(out_dir) if out_dir else run_path / "plots"
+    variability_path = run_path / "shap_variability.csv"
+    correlations_path = run_path / "shap_variability_correlations.csv"
+    if not variability_path.exists() or not correlations_path.exists():
+        return
+
+    variability = pd.read_csv(variability_path)
+    correlations = pd.read_csv(correlations_path)
+    for class_name, class_frame in variability.groupby("class_name"):
+        top_features = (
+            class_frame.groupby("feature")["shap_value_range"]
+            .mean()
+            .sort_values(ascending=False)
+            .head(top_n)
+            .index
+        )
+        plot_frame = class_frame[class_frame["feature"].isin(top_features)]
+        fig, ax = plt.subplots(figsize=(8.5, max(5, top_n * 0.28)))
+        sns.barplot(
+            data=plot_frame,
+            y="feature",
+            x="shap_value_range",
+            order=top_features[::-1],
+            ax=ax,
+        )
+        ax.set_title(f"SHAP Value Range Across Models: {class_name}")
+        ax.set_xlabel("mean per-sample SHAP value range")
+        ax.set_ylabel("feature")
+        _save(fig, out_path / f"shap_value_range_{class_name}.png")
+        plt.close(fig)
+
+    metrics = [
+        "spearman_conflict_vs_shap_range",
+        "spearman_conflict_vs_shap_variance",
+        "spearman_conflict_vs_sign_instability",
+    ]
+    for metric in metrics:
+        ranked = correlations.reindex(correlations[metric].abs().sort_values(ascending=False).index)
+        features = ranked["feature"].drop_duplicates().head(top_n)
+        plot_frame = correlations[correlations["feature"].isin(features)]
+        matrix = plot_frame.pivot(index="feature", columns="class_name", values=metric)
+        fig, ax = plt.subplots(figsize=(8, max(4, len(matrix) * 0.3)))
+        sns.heatmap(matrix, annot=True, fmt=".2f", cmap="vlag", center=0, vmin=-1, vmax=1, ax=ax)
+        ax.set_title(metric.replace("_", " "))
+        ax.set_xlabel("class")
+        ax.set_ylabel("feature")
+        _save(fig, out_path / f"{metric}_heatmap.png")
+        plt.close(fig)
+
+
 def plot_all(run_dir: str | Path, out_dir: str | Path | None = None, top_n: int = 20) -> None:
     plot_metrics(run_dir, out_dir)
     plot_decision_disagreement(run_dir, out_dir)
     plot_shap(run_dir, out_dir, top_n=top_n)
     plot_explanation_disagreement(run_dir, out_dir)
+    plot_shap_variability(run_dir, out_dir, top_n=top_n)

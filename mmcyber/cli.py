@@ -21,11 +21,14 @@ def main() -> None:
 
     disagree_parser = subparsers.add_parser("disagree")
     disagree_parser.add_argument("--run-dir", required=True)
+    disagree_parser.add_argument("--rashomon-tolerance", type=float, default=0.015)
+    disagree_parser.add_argument("--rashomon-metric", default="accuracy")
 
     shap_parser = subparsers.add_parser("shap")
     shap_parser.add_argument("--run-dir", required=True)
     shap_parser.add_argument("--max-background", type=int, default=128)
     shap_parser.add_argument("--max-explain", type=int, default=256)
+    shap_parser.add_argument("--only-conflicts", action="store_true")
 
     explain_disagree_parser = subparsers.add_parser("explain-disagree")
     explain_disagree_parser.add_argument("--run-dir", required=True)
@@ -41,9 +44,18 @@ def main() -> None:
         config = load_config(args.config)
         run_training(config, seeds=args.seeds, subset_fractions=args.subset_fractions)
     elif args.command == "disagree":
-        compute_disagreement(args.run_dir)
+        compute_disagreement(
+            args.run_dir,
+            rashomon_tolerance=args.rashomon_tolerance,
+            rashomon_metric=args.rashomon_metric,
+        )
     elif args.command == "shap":
-        compute_shap(args.run_dir, max_background=args.max_background, max_explain=args.max_explain)
+        compute_shap(
+            args.run_dir,
+            max_background=args.max_background,
+            max_explain=args.max_explain,
+            only_conflicts=args.only_conflicts,
+        )
     elif args.command == "explain-disagree":
         compute_explanation_disagreement(args.run_dir, top_k=args.top_k)
     elif args.command == "plot":

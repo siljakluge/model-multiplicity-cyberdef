@@ -24,7 +24,28 @@ def _load_model(path: Path, device: torch.device) -> MLPClassifier:
     return model
 
 
-def compute_shap(run_dir: str | Path, max_background: int = 128, max_explain: int = 256) -> None:
+def _select_explain_indices(run_path: Path, n_test: int, max_explain: int, seed: int, only_conflicts: bool) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    if only_conflicts and (run_path / "sample_disagreement.csv").exists():
+        sample_disagreement = pd.read_csv(run_path / "sample_disagreement.csv")
+        if "is_conflict" in sample_disagreement.columns:
+            conflict_ids = sample_disagreement.loc[sample_disagreement["is_conflict"].astype(bool), "sample_id"].to_numpy()
+        elif "conflict_ratio" in sample_disagreement.columns:
+            conflict_ids = sample_disagreement.loc[sample_disagreement["conflict_ratio"] > 0, "sample_id"].to_numpy()
+        else:
+            conflict_ids = np.array([], dtype=int)
+        if len(conflict_ids):
+            return rng.choice(conflict_ids, size=min(max_explain, len(conflict_ids)), replace=False)
+
+    return rng.choice(n_test, size=min(max_explain, n_test), replace=False)
+
+
+def compute_shap(
+    run_dir: str | Path,
+    max_background: int = 128,
+    max_explain: int = 256,
+    only_conflicts: bool = False,
+) -> None:
     import shap
 
     run_path = Path(run_dir)
@@ -34,13 +55,14 @@ def compute_shap(run_dir: str | Path, max_background: int = 128, max_explain: in
 
     rng = np.random.default_rng(42)
     background_idx = rng.choice(len(data.x_train), size=min(max_background, len(data.x_train)), replace=False)
-    explain_idx = rng.choice(len(data.x_test), size=min(max_explain, len(data.x_test)), replace=False)
+    explain_idx = _select_explain_indices(run_path, len(data.x_test), max_explain, seed=42, only_conflicts=only_conflicts)
     background = torch.from_numpy(data.x_train[background_idx]).to(device)
     explain = torch.from_numpy(data.x_test[explain_idx]).to(device)
 
     shap_dir = run_path / "shap_values"
     shap_dir.mkdir(parents=True, exist_ok=True)
     summary_rows = []
+    value_rows = []
 
     for model_path in sorted((run_path / "models").glob("*.pt")):
         model = _load_model(model_path, device)
@@ -77,5 +99,17 @@ def compute_shap(run_dir: str | Path, max_background: int = 128, max_explain: in
                         "mean_abs_shap": float(mean_abs[feature_idx]),
                     }
                 )
+            for sample_pos, sample_id in enumerate(explain_idx):
+                for feature_idx, feature_name in enumerate(data.feature_names):
+                    value_rows.append(
+                        {
+                            "model_id": model_path.stem,
+                            "sample_id": int(sample_id),
+                            "class_name": class_name,
+                            "feature": feature_name,
+                            "shap_value": float(class_first_values[class_idx, sample_pos, feature_idx]),
+                        }
+                    )
 
     pd.DataFrame(summary_rows).to_csv(run_path / "shap_summary.csv", index=False)
+    pd.DataFrame(value_rows).to_csv(run_path / "shap_values_long.csv.gz", index=False)
