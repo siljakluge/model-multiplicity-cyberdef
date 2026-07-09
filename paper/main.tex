@@ -1,0 +1,33 @@
+\documentclass[conference]{IEEEtran}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{url}
+
+\title{Model Multiplicity and Explanation Variability in Intrusion Detection}
+
+\author{\IEEEauthorblockN{Silja Kluge}
+\IEEEauthorblockA{University of Tuebingen\\
+Tuebingen, Germany}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Machine learning models used for intrusion detection are commonly selected by predictive performance. However, similarly accurate models may still disagree on individual network events and may produce different explanations for their predictions. This paper studies model multiplicity in a cyber defense setting by training multiple neural classifiers on NSL-KDD and comparing both their predictions and SHAP-based explanations. The current draft contains the paper skeleton, introduction, and methodology. Results and discussion will be completed after the final experimental runs.
+\end{abstract}
+
+\input{sections/introduction}
+\input{sections/methodology}
+\input{sections/experiments}
+\input{sections/results}
+\input{sections/discussion}
+\input{sections/conclusion}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
