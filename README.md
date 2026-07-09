@@ -47,6 +47,14 @@ python -m pip install -r requirements.txt
 python -m pip install -e . --no-deps
 ```
 
+If you see a warning like `A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x`, your environment picked a too-new NumPy version for the current PyTorch wheel. Fix it inside the activated venv with:
+
+```bash
+python -m pip install "numpy<2" --force-reinstall
+python -m pip install -r requirements.txt
+python -m mmcyber.cli --help
+```
+
 After activation, `python --version` should print Python 3.10 or newer. If it still prints `3.8.3`, delete the venv and recreate it with `python3.11`:
 
 ```bash
