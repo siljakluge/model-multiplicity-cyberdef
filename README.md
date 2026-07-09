@@ -24,20 +24,37 @@ git clone https://github.com/siljakluge/model-multiplicity-cyberdef.git
 cd model-multiplicity-cyberdef
 ```
 
-Create a virtual environment and install the requirements:
+Check your Python version before creating the virtual environment:
 
 ```bash
-python3 -m venv .venv
+python3 --version
+```
+
+The project needs Python 3.10 or newer. If this prints something like `Python 3.8.3`, do not use that interpreter. On macOS, install a newer Python with Homebrew:
+
+```bash
+brew install python@3.11
+```
+
+Then create a virtual environment with that exact interpreter and install the requirements:
+
+```bash
+python3.11 -m venv .venv
 source .venv/bin/activate
+python --version
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r requirements.txt
 python -m pip install -e . --no-deps
 ```
 
-If `python3` points to an old Python on the iMac, use a Python 3.10+ interpreter explicitly, for example:
+After activation, `python --version` should print Python 3.10 or newer. If it still prints `3.8.3`, delete the venv and recreate it with `python3.11`:
 
 ```bash
+deactivate 2>/dev/null || true
+rm -rf .venv
 python3.11 -m venv .venv
+source .venv/bin/activate
+python --version
 ```
 
 The commands below use `python -m mmcyber.cli` instead of the shorter `mmcyber` executable. That is a bit more verbose, but it works reliably as long as the virtual environment is active.
