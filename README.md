@@ -130,6 +130,11 @@ The NSL-KDD files are downloaded automatically into `data/raw/nsl-kdd/` on the f
 - `explanation_top_k_jaccard`: top-k explanation overlap by class
 - `shap_value_range_<class>`: mean per-sample SHAP range across models
 - `spearman_conflict_vs_*_heatmap`: feature-level correlations between conflict ratio and SHAP instability
+- `ba_mean_abs_shap_<class>`: BA-style mean absolute SHAP barplot
+- `ba_feature_ranking_<class>`: BA-style feature-rank boxplot across Rashomon models
+- `ba_heatmap_sign_instability_<class>`: BA-style sign-instability heatmap over conflict points and features
+- `ba_correlations_<class>`: BA-style correlation matrix for conflict ratio, sign instability, SHAP range, and SHAP variance
+- `ba_scatter_<class>/ba_range_*` and `ba_scatter_<class>/ba_variance_*`: per-feature conflict-ratio scatterplots colored by sign instability
 
 ## Research Notes
 

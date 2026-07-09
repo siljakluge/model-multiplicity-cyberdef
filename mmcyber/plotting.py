@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import numpy as np
 import pandas as pd
@@ -26,6 +27,29 @@ def _save(fig, path: Path) -> None:
 
 def _model_order(frame: pd.DataFrame) -> list[str]:
     return sorted(frame["model_id"].unique())
+
+
+def _safe_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_") or "value"
+
+
+def _spearman(x: pd.Series, y: pd.Series) -> float:
+    if len(x) < 2 or x.nunique(dropna=True) < 2 or y.nunique(dropna=True) < 2:
+        return float("nan")
+    return float(x.rank().corr(y.rank()))
+
+
+def _feature_order_by_mean_abs_shap(shap_values: pd.DataFrame, class_name: str, top_n: int | None = None) -> list[str]:
+    class_values = shap_values[shap_values["class_name"] == class_name]
+    order = (
+        class_values.assign(abs_shap=class_values["shap_value"].abs())
+        .groupby("feature")["abs_shap"]
+        .mean()
+        .sort_values(ascending=False)
+    )
+    if top_n is not None:
+        order = order.head(top_n)
+    return order.index.tolist()
 
 
 def plot_metrics(run_dir: str | Path, out_dir: str | Path | None = None) -> None:
@@ -180,15 +204,27 @@ def plot_explanation_disagreement(run_dir: str | Path, out_dir: str | Path | Non
 
 def plot_shap_variability(run_dir: str | Path, out_dir: str | Path | None = None, top_n: int = 20) -> None:
     plt, sns = _setup_matplotlib()
+    import matplotlib.colors as mcolors
+
     run_path = Path(run_dir)
     out_path = Path(out_dir) if out_dir else run_path / "plots"
     variability_path = run_path / "shap_variability.csv"
     correlations_path = run_path / "shap_variability_correlations.csv"
+    shap_values_path = run_path / "shap_values_long.csv.gz"
     if not variability_path.exists() or not correlations_path.exists():
         return
 
     variability = pd.read_csv(variability_path)
     correlations = pd.read_csv(correlations_path)
+    shap_values = pd.read_csv(shap_values_path) if shap_values_path.exists() else None
+
+    if shap_values is not None:
+        plot_ba_feature_rankings(shap_values, out_path, plt, sns, top_n=top_n)
+        plot_ba_mean_abs_shap(shap_values, out_path, plt, sns, top_n=top_n)
+        plot_ba_sign_instability(variability, shap_values, out_path, plt, top_n=top_n)
+        plot_ba_range_variance_scatter(variability, shap_values, out_path, plt, mcolors, top_n=top_n)
+        plot_ba_correlation_matrices(variability, shap_values, out_path, plt, sns, top_n=top_n)
+
     for class_name, class_frame in variability.groupby("class_name"):
         top_features = (
             class_frame.groupby("feature")["shap_value_range"]
@@ -228,6 +264,228 @@ def plot_shap_variability(run_dir: str | Path, out_dir: str | Path | None = None
         ax.set_xlabel("class")
         ax.set_ylabel("feature")
         _save(fig, out_path / f"{metric}_heatmap.png")
+        plt.close(fig)
+
+
+def plot_ba_mean_abs_shap(
+    shap_values: pd.DataFrame,
+    out_path: Path,
+    plt,
+    sns,
+    top_n: int = 20,
+) -> None:
+    for class_name, class_values in shap_values.groupby("class_name"):
+        plot_frame = (
+            class_values.assign(abs_shap=class_values["shap_value"].abs())
+            .groupby("feature", as_index=False)["abs_shap"]
+            .mean()
+            .rename(columns={"abs_shap": "mean_abs_shap"})
+            .sort_values("mean_abs_shap", ascending=False)
+            .head(top_n)
+        )
+        fig, ax = plt.subplots(figsize=(max(7, len(plot_frame) * 0.42), 4.8))
+        sns.barplot(data=plot_frame, x="feature", y="mean_abs_shap", color="#4C78A8", ax=ax)
+        ax.set_title(f"{class_name}: Mean Absolute SHAP Values")
+        ax.set_xlabel("feature")
+        ax.set_ylabel("mean absolute SHAP value")
+        ax.tick_params(axis="x", rotation=90)
+        _save(fig, out_path / f"ba_mean_abs_shap_{_safe_name(class_name)}.png")
+        plt.close(fig)
+
+
+def plot_ba_feature_rankings(
+    shap_values: pd.DataFrame,
+    out_path: Path,
+    plt,
+    sns,
+    top_n: int = 20,
+) -> None:
+    for class_name, class_values in shap_values.groupby("class_name"):
+        model_feature = (
+            class_values.assign(abs_shap=class_values["shap_value"].abs())
+            .groupby(["model_id", "feature"])["abs_shap"]
+            .mean()
+            .unstack("feature", fill_value=0.0)
+        )
+        if model_feature.empty:
+            continue
+        feature_order = model_feature.mean(axis=0).sort_values(ascending=False).head(top_n).index.tolist()
+        ranks = model_feature[feature_order].rank(axis=1, method="first", ascending=False).astype(int)
+        plot_frame = ranks.reset_index().melt(id_vars="model_id", var_name="feature", value_name="rank")
+        order = plot_frame.groupby("feature")["rank"].mean().sort_values().index
+
+        fig, ax = plt.subplots(figsize=(max(8, len(order) * 0.48), 5.2))
+        sns.boxplot(data=plot_frame, x="feature", y="rank", order=order, width=0.7, showfliers=False, ax=ax)
+        sns.stripplot(
+            data=plot_frame,
+            x="feature",
+            y="rank",
+            order=order,
+            color="black",
+            size=3,
+            alpha=0.55,
+            ax=ax,
+        )
+        ax.set_yticks(np.arange(1, len(order) + 1, 1))
+        ax.invert_yaxis()
+        ax.set_title(f"{class_name}: Distribution of Feature Rankings")
+        ax.set_xlabel("feature")
+        ax.set_ylabel("rank (1 = most important)")
+        ax.tick_params(axis="x", rotation=90)
+        _save(fig, out_path / f"ba_feature_ranking_{_safe_name(class_name)}.png")
+        plt.close(fig)
+
+
+def plot_ba_sign_instability(
+    variability: pd.DataFrame,
+    shap_values: pd.DataFrame,
+    out_path: Path,
+    plt,
+    top_n: int = 20,
+) -> None:
+    import matplotlib.colors as mcolors
+
+    cmap = mcolors.LinearSegmentedColormap.from_list("sign_instability", ["#FDE725", "#35B779", "#31688E"])
+    for class_name, class_values in variability.groupby("class_name"):
+        feature_order = _feature_order_by_mean_abs_shap(shap_values, class_name, top_n=top_n)
+        heatmap_frame = class_values[class_values["feature"].isin(feature_order)].pivot_table(
+            index="sample_id",
+            columns="feature",
+            values="sign_instability",
+            aggfunc="mean",
+        )
+        heatmap_frame = heatmap_frame.reindex(columns=feature_order).sort_index()
+        if heatmap_frame.empty:
+            continue
+
+        fig, ax = plt.subplots(figsize=(max(7, 1.0 + 0.45 * len(feature_order)), 8))
+        image = ax.imshow(heatmap_frame.to_numpy(), aspect="auto", vmin=0, vmax=0.5, cmap=cmap)
+        ax.set_title(f"{class_name}: Sign Instability")
+        ax.set_xlabel("features")
+        ax.set_ylabel("conflict points")
+        ax.set_xticks(np.arange(len(feature_order)))
+        ax.set_xticklabels(feature_order, rotation=90)
+        step = max(1, len(heatmap_frame) // 25)
+        y_positions = np.arange(0, len(heatmap_frame), step)
+        ax.set_yticks(y_positions)
+        ax.set_yticklabels([str(i) for i in y_positions])
+        colorbar = fig.colorbar(image, ax=ax)
+        colorbar.set_label("sign instability")
+        colorbar.set_ticks([0, 0.25, 0.5])
+        colorbar.set_ticklabels(["stable", "medium", "unstable"])
+        _save(fig, out_path / f"ba_heatmap_sign_instability_{_safe_name(class_name)}.png")
+        plt.close(fig)
+
+
+def plot_ba_range_variance_scatter(
+    variability: pd.DataFrame,
+    shap_values: pd.DataFrame,
+    out_path: Path,
+    plt,
+    mcolors,
+    top_n: int = 20,
+) -> None:
+    cmap = mcolors.LinearSegmentedColormap.from_list("sign_instability", ["#FDE725", "#35B779", "#31688E"])
+    plot_specs = [
+        ("shap_value_range", "SHAP explanation range", "ba_range"),
+        ("shap_value_variance", "SHAP explanation variance", "ba_variance"),
+    ]
+    for class_name, class_values in variability.groupby("class_name"):
+        feature_order = _feature_order_by_mean_abs_shap(shap_values, class_name, top_n=top_n)
+        class_out = out_path / f"ba_scatter_{_safe_name(class_name)}"
+        max_values = {
+            column: class_values.loc[class_values["feature"].isin(feature_order), column].max()
+            for column, _, _ in plot_specs
+        }
+        for feature_idx, feature in enumerate(feature_order):
+            feature_frame = class_values[class_values["feature"] == feature].copy()
+            if feature_frame.empty or "conflict_ratio" not in feature_frame:
+                continue
+            for column, ylabel, prefix in plot_specs:
+                corr = _spearman(feature_frame["conflict_ratio"], feature_frame[column])
+                fig, ax = plt.subplots(figsize=(6, 4.5))
+                scatter = ax.scatter(
+                    feature_frame["conflict_ratio"],
+                    feature_frame[column],
+                    c=feature_frame["sign_instability"],
+                    cmap=cmap,
+                    norm=mcolors.Normalize(vmin=0, vmax=0.5),
+                    alpha=0.65,
+                    edgecolor="black",
+                    linewidth=0.25,
+                )
+                ax.set_xlabel("conflict ratio")
+                ax.set_ylabel(ylabel)
+                ax.set_xlim(0, max(0.5, float(feature_frame["conflict_ratio"].max())))
+                ymax = max_values[column]
+                if pd.notna(ymax) and ymax > 0:
+                    ax.set_ylim(0, float(ymax) * 1.05)
+                title = f"{feature}: {ylabel}"
+                if np.isfinite(corr):
+                    title += f" (Spearman r = {corr:.3f})"
+                ax.set_title(title)
+                colorbar = fig.colorbar(scatter, ax=ax)
+                colorbar.set_label("sign instability")
+                colorbar.set_ticks([0, 0.25, 0.5])
+                _save(fig, class_out / f"{prefix}_{feature_idx:02d}_{_safe_name(feature)}.png")
+                plt.close(fig)
+
+
+def plot_ba_correlation_matrices(
+    variability: pd.DataFrame,
+    shap_values: pd.DataFrame,
+    out_path: Path,
+    plt,
+    sns,
+    top_n: int = 20,
+) -> None:
+    metrics = [
+        ("r_conflict_sign", "r(conflict,sign)"),
+        ("r_var_sign", "r(var,sign)"),
+        ("r_range_sign", "r(range,sign)"),
+        ("r_conflict_var", "r(conflict,var)"),
+        ("r_conflict_range", "r(conflict,range)"),
+        ("r_var_range", "r(var,range)"),
+    ]
+    for class_name, class_values in variability.groupby("class_name"):
+        feature_order = _feature_order_by_mean_abs_shap(shap_values, class_name, top_n=top_n)
+        rows = []
+        for feature in feature_order:
+            feature_frame = class_values[class_values["feature"] == feature]
+            rows.append(
+                {
+                    "feature": feature,
+                    "r_conflict_sign": _spearman(feature_frame["conflict_ratio"], feature_frame["sign_instability"]),
+                    "r_var_sign": _spearman(feature_frame["shap_value_variance"], feature_frame["sign_instability"]),
+                    "r_range_sign": _spearman(feature_frame["shap_value_range"], feature_frame["sign_instability"]),
+                    "r_conflict_var": _spearman(feature_frame["conflict_ratio"], feature_frame["shap_value_variance"]),
+                    "r_conflict_range": _spearman(feature_frame["conflict_ratio"], feature_frame["shap_value_range"]),
+                    "r_var_range": _spearman(feature_frame["shap_value_variance"], feature_frame["shap_value_range"]),
+                }
+            )
+        matrix = pd.DataFrame(rows).set_index("feature")
+        if matrix.empty:
+            continue
+        matrix = matrix[[column for column, _label in metrics]]
+        matrix.columns = [label for _column, label in metrics]
+        fig, ax = plt.subplots(figsize=(12, max(4.8, 0.35 * len(matrix))))
+        sns.heatmap(
+            matrix.abs(),
+            vmin=0,
+            vmax=1,
+            cmap="YlGn",
+            annot=matrix,
+            fmt=".3f",
+            ax=ax,
+        )
+        colorbar = ax.collections[0].colorbar
+        colorbar.set_label("absolute correlation strength")
+        ax.xaxis.set_ticks_position("top")
+        ax.xaxis.set_label_position("top")
+        ax.set_title(f"{class_name}: Correlation Matrix", pad=40)
+        ax.set_xlabel("")
+        ax.set_ylabel("feature")
+        _save(fig, out_path / f"ba_correlations_{_safe_name(class_name)}.png")
         plt.close(fig)
 
 
