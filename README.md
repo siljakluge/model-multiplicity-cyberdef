@@ -1,6 +1,6 @@
 # Model Multiplicity for Cyber Defense
 
-This is a small research scaffold for studying model multiplicity in intrusion detection. It trains many neural classifiers on the same task, varies random seeds and training subsets, then measures:
+This is a test for studying model multiplicity in intrusion detection. It trains many neural classifiers on the same task, varies random seeds and training subsets, then measures:
 
 - prediction disagreement, ambiguity, and pointwise conflict ratios between similarly good models
 - accuracy/F1 variability
