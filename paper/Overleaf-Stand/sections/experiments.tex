@@ -1,2 +1,21 @@
 \section{Experimental Setup}
 
+The current experimental pipeline is implemented in Python and exposed through the \texttt{mmcyber} command line interface. It is designed to produce a candidate set of neural intrusion detectors, filter these models into a Rashomon set, and then compare both predictions and SHAP explanations across the retained models.
+
+\subsection{Dataset and Task}
+
+The experiments use NSL-KDD as an initial intrusion-detection benchmark. The implementation downloads the predefined \texttt{KDDTrain+} and \texttt{KDDTest+} files automatically on the first run. Unless stated otherwise, the task is binary classification: all attack labels are mapped to one \textit{attack} class and normal traffic is retained as the \textit{normal} class. The original training file is split into training and validation data using an 80/20 stratified split with random seed 42, while the predefined NSL-KDD test file is used for final evaluation.
+
+The preprocessing pipeline drops the label and difficulty columns before training. Numeric features are standardized with a standard scaler. The categorical features \texttt{protocol\_type}, \texttt{service}, and \texttt{flag} are transformed with one-hot encoding using unknown-category handling for the test set. The fitted preprocessor and the resulting feature names are stored with the run artifacts so that later SHAP computations use the same feature representation as the trained models.
+
+\subsection{Model Training}
+
+Each model is a feed-forward multilayer perceptron implemented in PyTorch. The default architecture uses two hidden layers with 128 and 64 units. Each hidden layer consists of a linear transformation, ReLU activation, batch normalization, and dropout with probability 0.2. The final layer maps to the two output classes. Models are trained with cross-entropy loss and AdamW using a learning rate of $10^{-3}$, weight decay of $10^{-4}$, batch size 256, and a maximum of 20 epochs. Early stopping monitors validation loss with a patience of five epochs, and the best validation-loss checkpoint is used for test-set prediction.
+
+To induce model multiplicity, the default configuration trains models for five random seeds, $\{1,2,3,4,5\}$, and three stratified training-subset fractions, $\{1.0,0.75,0.5\}$. This yields 15 candidate models. The subset sampling preserves the binary class distribution as far as possible and changes both the examples available for training and, through the random seed, initialization and data-loader order. For each trained model, the pipeline stores the test predictions, predicted class probabilities, accuracy, macro-F1, and log loss.
+
+\subsection{Multiplicity and Explanation Analysis}
+
+After training, the candidate models are filtered into a Rashomon set using a configurable performance tolerance. The default command uses accuracy as the Rashomon metric and includes every model whose score is at most 0.015 below the best observed accuracy. Disagreement is then computed on the fixed test set. The pipeline stores pairwise disagreement rates between Rashomon-set models and per-sample vote statistics, including the majority prediction, vote entropy, majority fraction, conflict ratio, and a binary conflict indicator.
+
+SHAP explanations are computed for each model in the Rashomon set using \texttt{shap.DeepExplainer}. The default analysis samples up to 128 training examples as background data and up to 256 test examples for explanation. In the conflict-focused setting used for the current study, the explanation subset is restricted to samples with positive conflict ratio when such samples are available. SHAP values are stored per model, sample, class, and feature. The pipeline then compares mean absolute SHAP vectors between models using cosine distance and top-\(k\) feature-set overlap, with \(k=20\) by default. Finally, it aggregates per-sample SHAP range, variance, and sign instability across models and correlates these explanation-variability measures with the corresponding conflict ratio.

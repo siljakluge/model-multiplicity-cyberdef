@@ -14,6 +14,78 @@ Explainability is frequently proposed as a way to make ML-based intrusion detect
 
 This matters in cyber defense because explanations are not merely descriptive. They can influence whether analysts regard an alert as credible, which traffic characteristics they inspect, and which mitigation path they choose. If one model explains an attack prediction through failed-login features while another emphasizes service-level error rates or host-level traffic patterns, the resulting investigation may follow different hypotheses. A single-model explanation can therefore overstate the stability of the evidence behind an alert. Measuring explanation variability across similarly accurate models provides a more honest view of which explanatory signals are robust and which are artifacts of model selection.
 
+\subsection{SHAP Explanations}
+
+\gls{SHAP} is an explanation method based on Shapley values from cooperative game theory~\cite{shapley1953value,lundberg2017unified}. It treats input features as players in a coalition and assigns each feature a contribution to a model prediction. In this paper, SHAP is used because it supports both local explanations for individual network events and global summaries of feature importance across a test set.
+
+Let $f$ be a trained classifier and let $x'$ denote a simplified binary representation of an input, where $x'_i=1$ indicates that feature $i$ is present. The additive explanation model is
+\begin{equation*}
+    g(x') = \phi_0 + \sum_{i=1}^{M} \phi_i x'_i ,
+\end{equation*}
+where $M$ is the number of simplified features, $\phi_0$ is the baseline output, and $\phi_i$ is the attribution assigned to feature $i$. For a feature set $F$, the Shapley value of feature $i$ is
+\begin{equation*}
+    \phi_i =
+    \sum_{S \subseteq F \setminus \{i\}}
+    \frac{|S|!(|F|-|S|-1)!}{|F|!}
+    \left(f_{S \cup \{i\}}(x_{S \cup \{i\}}) - f_S(x_S)\right).
+\end{equation*}
+Computing the exact value is expensive because it requires evaluating many feature coalitions. The implementation therefore uses a SHAP explainer with a background sample from the training data to approximate feature contributions without retraining a model for every coalition.
+
+\subsection{Multiplicity and Explanation-Variability Measures}
+
+Following prior work on predictive multiplicity, this paper evaluates disagreement within a set of similarly performing models rather than comparing only one selected classifier to the ground truth~\cite{marx2020predictive,hsu2022rashomon}. Let $\mathcal{H}_{\epsilon}$ denote a Rashomon set containing all trained models whose validation or test performance is within tolerance $\epsilon$ of the best observed model. For an input $x_i$, each model $h \in \mathcal{H}_{\epsilon}$ produces a class prediction $h(x_i)$. Predictive multiplicity exists when models in this set assign conflicting predictions to the same input.
+
+At the dataset level, ambiguity measures how often such conflicts occur. For a test set $\mathcal{D}=\{x_i\}_{i=1}^{n}$, it is defined as
+\begin{equation*}
+    \alpha_{\epsilon} =
+    \frac{1}{n}
+    \sum_{i=1}^{n}
+    \mathbb{I}\left[
+        \exists h_a,h_b \in \mathcal{H}_{\epsilon}: h_a(x_i) \neq h_b(x_i)
+    \right].
+\end{equation*}
+Ambiguity is therefore the fraction of samples for which at least two Rashomon-set models disagree. Discrepancy captures the largest disagreement that any single competing model can have with a reference model $h_0$, for example the empirically best model,
+\begin{equation*}
+    \delta_{\epsilon}(h_0) =
+    \max_{h \in \mathcal{H}_{\epsilon}}
+    \frac{1}{n}
+    \sum_{i=1}^{n}
+    \mathbb{I}\left[h(x_i) \neq h_0(x_i)\right].
+\end{equation*}
+Together, ambiguity and discrepancy separate prevalence from severity: ambiguity asks how many samples are affected by any conflict, while discrepancy asks how different a plausible model can be from the chosen reference.
+
+For the implemented analysis, disagreement is additionally represented pointwise through a conflict ratio. Let $v_{ic}$ be the number of Rashomon-set models predicting class $c$ for sample $x_i$, and let $|\mathcal{H}_{\epsilon}|$ be the number of retained models. The majority fraction is
+\begin{equation*}
+    m_i = \frac{\max_c v_{ic}}{|\mathcal{H}_{\epsilon}|},
+\end{equation*}
+and the conflict ratio is
+\begin{equation*}
+    r_i = 1 - m_i .
+\end{equation*}
+Thus, $r_i=0$ indicates unanimous predictions, whereas larger values indicate stronger disagreement with the majority vote. This pointwise metric is useful for linking predictive instability to explanation instability on the same samples.
+
+Explanation variability is measured over SHAP values computed for each model in $\mathcal{H}_{\epsilon}$. Let $\phi_{h,i,j,c}$ denote the SHAP value assigned by model $h$ to feature $j$ for sample $x_i$ and class $c$. The analysis records the range and variance across Rashomon-set models,
+\begin{equation*}
+    R_{i,j,c} =
+    \max_{h \in \mathcal{H}_{\epsilon}} \phi_{h,i,j,c}
+    -
+    \min_{h \in \mathcal{H}_{\epsilon}} \phi_{h,i,j,c},
+\end{equation*}
+\begin{equation*}
+    V_{i,j,c} =
+    \operatorname{Var}_{h \in \mathcal{H}_{\epsilon}}
+    \left(\phi_{h,i,j,c}\right).
+\end{equation*}
+It also measures sign instability as
+\begin{equation*}
+    s_{i,j,c} =
+    \min\left(
+        \frac{1}{|\mathcal{H}_{\epsilon}|}\sum_{h \in \mathcal{H}_{\epsilon}}\mathbb{I}[\phi_{h,i,j,c} > 0],
+        \frac{1}{|\mathcal{H}_{\epsilon}|}\sum_{h \in \mathcal{H}_{\epsilon}}\mathbb{I}[\phi_{h,i,j,c} \leq 0]
+    \right).
+\end{equation*}
+This value is near zero when models agree on whether a feature supports or opposes a class prediction, and larger when the direction of the explanation changes across similarly accurate models. Finally, Spearman correlations between $r_i$ and $R_{i,j,c}$, $V_{i,j,c}$, or $s_{i,j,c}$ test whether samples with stronger predictive conflict also exhibit less stable explanations.
+
 \subsection{Adversarial and Operational Robustness}
 
 Cyber defense also differs from many standard classification settings because the input distribution is adversarial and non-stationary. Attackers adapt, benign network behavior changes, and deployment environments rarely match benchmark assumptions. Prior work on adversarial machine learning for network intrusion detection emphasizes that ML-based NIDS can themselves become attack targets and that robustness, explainability, and security must be considered alongside predictive performance~\cite{pawlicki2020defending,choras2020machine}. This creates a natural motivation for analyzing not only whether a model performs well on average, but also whether its decisions and explanations remain stable under plausible model variation.
