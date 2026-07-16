@@ -1,0 +1,36 @@
+{
+  "dataset": {
+    "name": "nsl_kdd",
+    "raw_dir": "data/raw/nsl-kdd",
+    "task": "binary",
+    "test_size": 0.2
+  },
+  "experiment_name": "nslkdd_multiplicity",
+  "run_dir": "runs/nslkdd_multiplicity",
+  "training": {
+    "batch_size": 256,
+    "device": "auto",
+    "dropout": 0.2,
+    "epochs": 20,
+    "hidden_dims": [
+      128,
+      64
+    ],
+    "learning_rate": 0.001,
+    "patience": 5,
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "subset_fractions": [
+      1.0,
+      0.75,
+      0.5
+    ],
+    "subset_strategy": "stratified",
+    "weight_decay": 0.0001
+  }
+}

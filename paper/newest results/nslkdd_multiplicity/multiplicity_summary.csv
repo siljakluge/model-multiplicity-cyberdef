@@ -1,0 +1,2 @@
+rashomon_metric,rashomon_tolerance,best_score,n_models_total,n_models_rashomon,ambiguity,mean_conflict_ratio,max_conflict_ratio,mean_pairwise_disagreement,max_pairwise_disagreement
+accuracy,0.015,0.7991926898509581,15,10,0.10038147622427253,0.02224095102909865,0.5,0.03494598217806166,0.06019339957416608
