@@ -116,6 +116,8 @@ def prepare_dataset(config: dict, run_dir: Path) -> PreparedData:
 
     task = dataset_config.get("task", "binary")
     if task == "multiclass":
+        # Fit on train+test labels so the encoder can represent every NSL-KDD
+        # attack class that may appear in the held-out split.
         encoder = LabelEncoder().fit(pd.concat([train_df["label"], test_df["label"]], ignore_index=True))
         y_full, class_names, _ = _target(train_df, task, encoder)
         y_test, _, _ = _target(test_df, task, encoder)
@@ -129,6 +131,9 @@ def prepare_dataset(config: dict, run_dir: Path) -> PreparedData:
 
     categorical_cols = ["protocol_type", "service", "flag"]
     numeric_cols = [c for c in x_full_df.columns if c not in categorical_cols]
+    # Preserve a fixed feature space across all models: numerical columns are
+    # scaled, categorical protocol/service/flag values are one-hot encoded, and
+    # unseen test categories are ignored instead of failing.
     preprocessor = ColumnTransformer(
         transformers=[
             ("num", StandardScaler(), numeric_cols),
@@ -171,6 +176,9 @@ def stratified_subset_indices(y: np.ndarray, fraction: float, seed: int) -> np.n
         return np.arange(len(y))
     rng = np.random.default_rng(seed)
     indices: list[np.ndarray] = []
+    # Keep class proportions roughly stable when training on partial data, so
+    # performance differences are less likely to come from dropped minority
+    # classes and more from model multiplicity.
     for label in np.unique(y):
         label_indices = np.flatnonzero(y == label)
         size = max(1, int(round(len(label_indices) * fraction)))

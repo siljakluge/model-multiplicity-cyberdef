@@ -21,6 +21,8 @@ def _setup_matplotlib():
 def _save(fig, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
+    # Save both raster previews and publication-friendly PDFs with identical
+    # basenames so LaTeX and quick file browsing can use the same plot set.
     fig.savefig(path, dpi=180, bbox_inches="tight")
     fig.savefig(path.with_suffix(".pdf"), bbox_inches="tight")
 
@@ -98,6 +100,7 @@ def plot_decision_disagreement(run_dir: str | Path, out_dir: str | Path | None =
     pairwise = pd.read_csv(run_path / "disagreement_summary.csv")
     sample = pd.read_csv(run_path / "sample_disagreement.csv")
 
+    # Reconstruct the symmetric pairwise matrix from the long-form pair table.
     pivot = predictions.pivot(index="sample_id", columns="model_id", values="y_pred")
     models = list(pivot.columns)
     matrix = pd.DataFrame(np.eye(len(models)), index=models, columns=models)
@@ -219,6 +222,8 @@ def plot_shap_variability(run_dir: str | Path, out_dir: str | Path | None = None
     shap_values = pd.read_csv(shap_values_path) if shap_values_path.exists() else None
 
     if shap_values is not None:
+        # These BA-style plots use the full long-form SHAP table, while the
+        # generic plots below use pre-aggregated variability/correlation tables.
         plot_ba_feature_rankings(shap_values, out_path, plt, sns, top_n=top_n)
         plot_ba_mean_abs_shap(shap_values, out_path, plt, sns, top_n=top_n)
         plot_ba_sign_instability(variability, shap_values, out_path, plt, top_n=top_n)
@@ -309,6 +314,8 @@ def plot_ba_feature_rankings(
         )
         if model_feature.empty:
             continue
+        # Rank features inside each model, then visualize the rank distribution
+        # across models to show stable vs. model-dependent feature importance.
         feature_order = model_feature.mean(axis=0).sort_values(ascending=False).head(top_n).index.tolist()
         ranks = model_feature[feature_order].rank(axis=1, method="first", ascending=False).astype(int)
         plot_frame = ranks.reset_index().melt(id_vars="model_id", var_name="feature", value_name="rank")
@@ -347,6 +354,8 @@ def plot_ba_sign_instability(
 
     cmap = mcolors.LinearSegmentedColormap.from_list("sign_instability", ["#FDE725", "#35B779", "#31688E"])
     for class_name, class_values in variability.groupby("class_name"):
+        # Order columns by global SHAP importance so the heatmap emphasizes the
+        # most relevant features first.
         feature_order = _feature_order_by_mean_abs_shap(shap_values, class_name, top_n=top_n)
         heatmap_frame = class_values[class_values["feature"].isin(feature_order)].pivot_table(
             index="sample_id",
@@ -393,6 +402,8 @@ def plot_ba_range_variance_scatter(
     for class_name, class_values in variability.groupby("class_name"):
         feature_order = _feature_order_by_mean_abs_shap(shap_values, class_name, top_n=top_n)
         class_out = out_path / f"ba_scatter_{_safe_name(class_name)}"
+        # Use shared y-limits per metric/class so feature scatter plots remain
+        # visually comparable within the same class.
         max_values = {
             column: class_values.loc[class_values["feature"].isin(feature_order), column].max()
             for column, _, _ in plot_specs

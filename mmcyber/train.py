@@ -42,6 +42,9 @@ def train_one_model(
     training_config = config["training"]
     set_seed(seed)
     device = resolve_device(training_config.get("device", "auto"))
+    # Subset sampling is part of the Rashomon construction: varying both seed
+    # and training fraction creates models that are similar in performance but
+    # can disagree on individual samples.
     subset_idx = stratified_subset_indices(data.y_train, subset_fraction, seed)
     x_train = data.x_train[subset_idx]
     y_train = data.y_train[subset_idx]
@@ -86,6 +89,8 @@ def train_one_model(
                 val_losses.append(criterion(model(batch_x), batch_y).item())
         val_loss = float(np.mean(val_losses))
         if val_loss < best_val_loss:
+            # Keep the best validation checkpoint instead of the final epoch so
+            # all models are compared at their strongest observed state.
             best_val_loss = val_loss
             best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
             stale_epochs = 0
@@ -141,6 +146,8 @@ def run_training(config: dict, seeds: list[int] | None = None, subset_fractions:
     prediction_frames = []
     for seed in tqdm(seeds, desc="seeds"):
         for fraction in subset_fractions:
+            # The model_id encodes the experimental factors used later by
+            # disagreement, SHAP and plotting steps.
             model_id = f"seed{seed}_frac{str(fraction).replace('.', 'p')}"
             result = train_one_model(data, config, seed, fraction, model_id, run_dir)
             probs = result.pop("probs")

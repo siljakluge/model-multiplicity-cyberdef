@@ -17,6 +17,8 @@ def _select_rashomon_models(metrics: pd.DataFrame, tolerance: float, metric: str
     if metric not in metrics.columns:
         raise ValueError(f"Unknown Rashomon metric {metric!r}; available columns: {sorted(metrics.columns)}")
     best = float(metrics[metric].max())
+    # Rashomon set: all models within a small absolute tolerance of the best
+    # observed score. Downstream disagreement is computed only inside this set.
     selected = set(metrics.loc[metrics[metric] >= best - tolerance, "model_id"])
     return selected, best
 
@@ -31,6 +33,8 @@ def compute_disagreement(
     metrics = pd.read_csv(run_path / "metrics.csv")
     rashomon_models, best_score = _select_rashomon_models(metrics, rashomon_tolerance, rashomon_metric)
     predictions = predictions[predictions["model_id"].isin(rashomon_models)].copy()
+    # Pivot to one row per test sample and one column per selected model; this
+    # makes pairwise model disagreement and per-sample vote statistics direct.
     pivot = predictions.pivot(index="sample_id", columns="model_id", values="y_pred")
 
     rows = []
@@ -54,6 +58,8 @@ def compute_disagreement(
         majority_idx = int(np.argmax(counts))
         majority_label = int(values[majority_idx])
         majority_fraction = float(counts[majority_idx] / counts.sum())
+        # Conflict ratio is zero when all Rashomon models agree and grows as the
+        # majority vote becomes less dominant.
         conflict_ratio = float(1.0 - majority_fraction)
         sample_rows.append(
             {

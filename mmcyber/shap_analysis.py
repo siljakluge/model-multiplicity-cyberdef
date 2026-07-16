@@ -35,6 +35,8 @@ def _select_explain_indices(run_path: Path, n_test: int, max_explain: int, seed:
         else:
             conflict_ids = np.array([], dtype=int)
         if len(conflict_ids):
+            # Prefer ambiguous samples when requested; these are most informative
+            # for comparing explanation behavior across near-equivalent models.
             return rng.choice(conflict_ids, size=min(max_explain, len(conflict_ids)), replace=False)
 
     return rng.choice(n_test, size=min(max_explain, n_test), replace=False)
@@ -54,6 +56,8 @@ def compute_shap(
     device = resolve_device(config["training"].get("device", "auto"))
 
     rng = np.random.default_rng(42)
+    # DeepExplainer needs a compact background set. Keeping the same random seed
+    # across models makes SHAP values comparable within one run.
     background_idx = rng.choice(len(data.x_train), size=min(max_background, len(data.x_train)), replace=False)
     explain_idx = _select_explain_indices(run_path, len(data.x_test), max_explain, seed=42, only_conflicts=only_conflicts)
     background = torch.from_numpy(data.x_train[background_idx]).to(device)
@@ -70,7 +74,8 @@ def compute_shap(
         shap_values = explainer.shap_values(explain)
         values = np.asarray(shap_values)
 
-        # shap returns either class-first or sample-first depending on version/model output.
+        # SHAP returns either class-first or sample-first depending on version
+        # and model output shape; normalize to [class, sample, feature].
         if values.ndim == 3 and values.shape[0] == len(data.class_names):
             class_first_values = values
         elif values.ndim == 3 and values.shape[-1] == len(data.class_names):
@@ -89,6 +94,9 @@ def compute_shap(
         for class_idx, class_name in enumerate(data.class_names):
             mean_abs = np.abs(class_first_values[class_idx]).mean(axis=0)
             top_idx = np.argsort(mean_abs)[::-1][:50]
+            # Summary rows keep only the strongest features for compact plots;
+            # value_rows below keeps the full per-sample tensor for variability
+            # and correlation analysis.
             for rank, feature_idx in enumerate(top_idx, start=1):
                 summary_rows.append(
                     {

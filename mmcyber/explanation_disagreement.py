@@ -33,6 +33,8 @@ def compute_explanation_disagreement(run_dir: str | Path, top_k: int = 20) -> No
             vectors[model_id] = vector
             top_features[model_id] = set(model_frame.nsmallest(top_k, "rank")["feature"])
 
+        # Align SHAP importance vectors on the union of features so cosine
+        # distance is not biased by features missing from one model's top list.
         all_features = sorted(set().union(*(set(v.index) for v in vectors.values())))
         for model_a, model_b in combinations(sorted(vectors), 2):
             a = vectors[model_a].reindex(all_features, fill_value=0.0).to_numpy()
@@ -65,6 +67,8 @@ def compute_shap_variability(run_dir: str | Path) -> None:
     sample_cols = ["sample_id", "conflict_ratio", "is_conflict", "vote_entropy", "majority_fraction"]
     available_cols = [column for column in sample_cols if column in sample_disagreement.columns]
 
+    # Variability is measured per sample/class/feature across the Rashomon
+    # models: same input point, same output class, different explanations.
     grouped = shap_values.groupby(["sample_id", "class_name", "feature"])["shap_value"]
     variability = grouped.agg(
         shap_value_min="min",
@@ -77,6 +81,8 @@ def compute_shap_variability(run_dir: str | Path) -> None:
 
     positive_fraction = grouped.apply(lambda values: float((values > 0).mean())).reset_index(name="positive_fraction")
     variability = variability.merge(positive_fraction, on=["sample_id", "class_name", "feature"])
+    # Sign instability is bounded in [0, 0.5]; zero means all models agree on
+    # attribution direction, 0.5 means an even split between positive/negative.
     variability["sign_instability"] = np.minimum(
         variability["positive_fraction"],
         1.0 - variability["positive_fraction"],
@@ -88,6 +94,8 @@ def compute_shap_variability(run_dir: str | Path) -> None:
 
     correlation_rows = []
     for (class_name, feature), frame in variability.groupby(["class_name", "feature"]):
+        # Correlate predictive multiplicity with explanation variability to
+        # identify features whose explanations change most on disputed samples.
         correlation_rows.append(
             {
                 "class_name": class_name,
