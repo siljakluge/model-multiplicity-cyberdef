@@ -4,7 +4,7 @@ The implemented pipeline consists of five stages: data preparation, model traini
 
 \subsection{Data Preparation}
 
-The current implementation uses NSL-KDD as the default intrusion-detection dataset. The dataset is downloaded automatically on the first run and stored locally under \texttt{data/raw/nsl-kdd/}. The task is configured as binary classification by default, mapping all attack labels to one attack class and retaining normal traffic as the second class. A multiclass configuration is supported in the data loader but is not the focus of the current draft.
+The current implementation uses \gls{NSLKDD} as the default intrusion-detection dataset. The dataset is downloaded automatically on the first run and stored locally under \texttt{data/raw/nsl-kdd/}. The task is configured as binary classification by default, mapping all attack labels to one attack class and retaining normal traffic as the second class. A multiclass configuration is supported in the data loader but is not the focus of the current draft.
 
 Categorical features, namely protocol type, service, and flag, are transformed with one-hot encoding. Numeric features are standardized with a standard scaler. The preprocessing pipeline is fitted on the training split and then applied to validation and test data. The fitted preprocessor and feature names are stored in the run directory to keep later explanation steps aligned with the trained models.
 
@@ -26,12 +26,12 @@ Predictive multiplicity is measured at two levels. At the model-pair level, the 
 
 \subsection{Explanation Variability}
 
-The pipeline computes SHAP explanations for each model in the Rashomon set. A random subset of training samples is used as background data, and a configurable subset of test samples is explained. When enabled, the \texttt{--only-conflicts} option restricts the explanation set to samples with positive conflict ratio, matching the conflict-focused analysis used in the prior BA-style experiments.
+The pipeline computes \gls{SHAP} explanations for each model in the Rashomon set. A random subset of training samples is used as background data, and a configurable subset of test samples is explained. When enabled, the \texttt{--only-conflicts} option restricts the explanation set to samples with positive conflict ratio, matching the conflict-focused analysis used in the prior BA-style experiments.
 
-For each model, class, sample, and feature, the SHAP value is stored in long format. The implementation also computes mean absolute SHAP values per feature and model, which are used to compare feature rankings and explanation distances. Pairwise explanation disagreement is summarized using cosine distance between mean-absolute-SHAP vectors and Jaccard overlap between top-\(k\) feature sets.
+For each model, class, sample, and feature, the \gls{SHAP} value is stored in long format. The implementation also computes mean absolute \gls{SHAP} values per feature and model, which are used to compare feature rankings and explanation distances. Pairwise explanation disagreement is summarized using cosine distance between mean-absolute-\gls{SHAP} vectors and Jaccard overlap between top-\(k\) feature sets.
 
 \subsection{Variability Metrics}
 
-Our analysis aggregates SHAP values across models for each sample, class, and feature. It computes the minimum, maximum, mean, standard deviation, variance, and range of SHAP values. In addition, sign instability is measured as the smaller of the positive and negative sign fractions across models. This captures whether similarly accurate models agree on the direction of a feature's contribution.
+Our analysis aggregates \gls{SHAP} values across models for each sample, class, and feature. It computes the minimum, maximum, mean, standard deviation, variance, and range of \gls{SHAP} values. In addition, sign instability is measured as the smaller of the positive and negative sign fractions across models. This captures whether similarly accurate models agree on the direction of a feature's contribution.
 
-Finally, the implementation relates explanation variability to predictive multiplicity by computing Spearman correlations between conflict ratio and SHAP value range, SHAP value variance, and sign instability for each feature and class. The plotting module produces publication-oriented figures for metric variability, predictive disagreement, SHAP feature importance, explanation disagreement, sign-instability heatmaps, correlation matrices, and per-feature scatter plots.
+Finally, the implementation relates explanation variability to predictive multiplicity by computing Spearman correlations between conflict ratio and \gls{SHAP} value range, \gls{SHAP} value variance, and sign instability for each feature and class. The plotting module produces publication-oriented figures for metric variability, predictive disagreement, \gls{SHAP} feature importance, explanation disagreement, sign-instability heatmaps, correlation matrices, and per-feature scatter plots.
