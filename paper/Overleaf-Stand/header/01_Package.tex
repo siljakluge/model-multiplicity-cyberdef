@@ -1,0 +1,101 @@
+%\usepackage[bookmarks=false]{hyperref}
+\usepackage{amsmath,amsthm,amssymb,amsfonts,xpatch}
+\usepackage{array}
+\usepackage[acronym,toc]{glossaries}
+\usepackage{algorithm,algorithmic}
+\usepackage[table,xcdraw]{xcolor}
+\usepackage{subcaption}
+\usepackage{mathtools}
+\usepackage{todonotes}
+\usepackage{dirtytalk}
+\usepackage{nicefrac}
+\usepackage{multirow}
+\usepackage{textcomp}
+\usepackage{booktabs}
+\usepackage{textcomp}
+\usepackage{graphicx}
+\usepackage{latexsym}
+\usepackage{paralist}
+\usepackage{relsize}
+\usepackage{balance}
+\usepackage{comment}
+\usepackage{pifont}
+\usepackage{xfrac}
+\usepackage{tasks}
+\usepackage{cite}
+\usepackage{enumerate}
+\usepackage{xspace}
+%\usepackage[hidelinks]{hyperref}  % creates clickable crossrefs and allows clickable links with \url{...}
+\usepackage{hyphenat}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{paralist}
+\usepackage{placeins}
+
+\hyphenpenalty=9000
+
+% Link colors
+%\hypersetup{
+%    colorlinks=true,
+%    linkcolor=blue,
+%    filecolor=magenta,      
+%    urlcolor=cyan,
+%    citecolor=red,
+%    pdftitle={MILCOM},
+%    pdfauthor={Thales Deutschland GmbH},    
+%    }
+
+% Add DoD Distro A statement
+%\usepackage[pages=some,placement=bottom,opacity=1,color=black,scale=0.9,vshift=24,contents={Distribution Statement A: Approved for public release. Distribution is unlimited}]{background}
+%\BgThispage
+
+\makeatletter
+   \xpatchcmd{\@thm}{\fontseries\mddefault\upshape}{}{}{} % same font as thm-header
+\makeatother
+
+\setlength{\columnsep}{0.24 in}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\markboth{$>$ REPLACE THIS LINE WITH YOUR PAPER IDENTIFICATION NUMBER $<$}{$>$ REPLACE THIS LINE WITH YOUR PAPER IDENTIFICATION NUMBER $<$}
+
+\newcommand{\threat}[1]{ 
+{\textit{#1}}:}
+
+\newcommand{\misusecase}[1]{ 
+{\textit{#1}}:}
+
+\newcommand{\usecase}[1]{ 
+{\textit{#1}}:}
+
+%\newcommand{\usecase}[1]{ {\underline{\textit{#1}}}:}
+
+\newcommand{\rewrite}[1]{\textcolor{red}{#1}}
+
+\newcommand{\av}[1]{\todo[color=green!40,inline]{\textbf{Alex}: #1}}
+\newcommand{\jl}[1]{\todo[color=cyan!40,inline]{\textbf{Johannes}: #1}}
+\newcommand{\rl}[1]{\todo[color=yellow!40,inline]{\textbf{Roberto}: #1}}
+\newcommand{\ab}[1]{\todo[color=orange!40,inline]{\textbf{Adrien}: #1}}
+\newcommand{\tobi}[1]{\todo[color=orange!40,inline]{\textbf{Tobias}: #1}}
+\newcommand{\TODO}[1]{\todo[color=red!50,inline]{\textbf{TODO}: #1}}
+\newcommand{\kw}[1]{\todo[color=blue!40,inline]{\textbf{KW}: #1}}
+\newcommand{\nn}[1]{\todo[color=teal!40,inline]{\textbf{NAN}: #1}}
+\newcommand{\rev}[1]{\todo[color=red!40,inline]{\textbf{REVIEWER}: #1}}
+
+\newcommand{\Var}{\mathrm{Var}}
+
+\newcommand{\ACDCore}{\textit{ACD-Core}\xspace}
+\newcommand{\ACDCC}{\textit{ACD-CC}\xspace}
+
+\theoremstyle{definition}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{corollary}{Corollary}[theorem]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{Definition}{Definition}[section]
+\newtheorem{problem}{Problem}[section]
+
+% Remove the indent before items in lists
+%\usepackage{enumitem}
+%\setlist[itemize]{align=parleft,left=0pt..1em}
+
+%\setlist[enumerate]{align=parleft,left=0pt..1em}

@@ -1,0 +1,30 @@
+\documentclass[10pt,conference]{IEEEtran}
+\usepackage[letterpaper, left=0.625in, right=0.625in, bottom=1.1in, top=0.75in]{geometry}
+
+
+% Packages and definitions 
+\input{header/01_Package}
+
+\begin{document}
+        % Header
+        \input{header/02_Title}
+        \input{header/03_Author}  
+        \input{sections/Acronyms}
+
+\begin{abstract}
+Machine learning models used for intrusion detection are commonly selected by predictive performance. However, similarly accurate models may still disagree on individual network events and may produce different explanations for their predictions. This paper studies model multiplicity in a cyber defense setting by training multiple neural classifiers on NSL-KDD and comparing both their predictions and SHAP-based explanations. 
+\end{abstract}
+
+\input{sections/introduction}
+\input{sections/motivation}
+\input{sections/background}
+\input{sections/methodology}
+\input{sections/experiments}
+\input{sections/results}
+\input{sections/discussion}
+\input{sections/conclusion}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

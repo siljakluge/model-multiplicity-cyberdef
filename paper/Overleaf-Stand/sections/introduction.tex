@@ -1,0 +1,18 @@
+\section{Introduction}
+
+Machine learning is increasingly used in security-critical domains where automated decisions can affect operational resilience, incident response, and trust in deployed systems. Intrusion detection is a representative example: classifiers are trained to distinguish benign from malicious network behavior, and their predictions may inform alerts, prioritization, or defensive actions. In such settings, model quality is often summarized by aggregate metrics such as accuracy or F1 score. These metrics are necessary, but they do not fully describe the behavior of a model on individual samples.
+
+A central difficulty is model multiplicity. Multiple models can achieve similar predictive performance while making different predictions for specific datapoints. This phenomenon is related to the Rashomon effect: a learning problem may admit many nearly optimal models rather than a single uniquely justified solution. In high-stakes settings, this creates a practical problem. If two similarly accurate models disagree on whether a network event is malicious, the choice of one model over another is not merely a technical detail.
+
+The issue becomes more severe when explanations are used to interpret model behavior. Explanation methods such as SHAP attribute a model's prediction to input features, but these explanations are usually computed for one selected model. If another similarly accurate model would produce a different prediction or assign importance to different features, then an explanation for a single model may not be representative of the broader set of plausible models. Prior work on model multiplicity and explanation multiplicity motivates treating predictive disagreement and explanation variability as related but distinct objects of analysis.
+
+This paper transfers this perspective to intrusion detection. We study a set of neural network classifiers trained on NSL-KDD under controlled variation in random seed and training subset. We first identify a Rashomon set of similarly performing models. We then measure predictive multiplicity through pairwise disagreement, ambiguity, and pointwise conflict ratios. Finally, we compute SHAP explanations for the models and quantify explanation variability through feature-ranking differences, SHAP value range, variance, sign instability, and correlations between predictive conflict and explanation instability.
+
+The paper makes the following contributions:
+\begin{itemize}
+    \item It provides a reproducible pipeline for studying model multiplicity in intrusion detection.
+    \item It adapts explanation-variability analyses to cyber defense data.
+    \item It connects pointwise predictive conflict with SHAP-based explanation variability across similarly accurate neural classifiers.
+\end{itemize}
+
+The remainder of the paper is organized as follows. Section~II describes the implemented methodology. Section~III defines the experimental setup. Sections~IV and~V are reserved for the final results and discussion, and Section~VI concludes the paper.
