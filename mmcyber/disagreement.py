@@ -7,6 +7,16 @@ import numpy as np
 import pandas as pd
 
 
+def _difference_signature(left: pd.Series, right: pd.Series) -> tuple[str, ...]:
+    factors = []
+    for column in ["seed", "subset_fraction", "architecture_id", "hidden_dims_label", "activation"]:
+        if column in left.index and column in right.index and left[column] != right[column]:
+            if column == "hidden_dims_label":
+                continue
+            factors.append(column)
+    return tuple(factors)
+
+
 def _entropy(votes: np.ndarray) -> float:
     _, counts = np.unique(votes, return_counts=True)
     probabilities = counts / counts.sum()
@@ -33,6 +43,7 @@ def compute_disagreement(
     metrics = pd.read_csv(run_path / "metrics.csv")
     rashomon_models, best_score = _select_rashomon_models(metrics, rashomon_tolerance, rashomon_metric)
     predictions = predictions[predictions["model_id"].isin(rashomon_models)].copy()
+    metric_lookup = metrics.set_index("model_id")
     # Pivot to one row per test sample and one column per selected model; this
     # makes pairwise model disagreement and per-sample vote statistics direct.
     pivot = predictions.pivot(index="sample_id", columns="model_id", values="y_pred")
@@ -40,10 +51,26 @@ def compute_disagreement(
     rows = []
     for model_a, model_b in combinations(pivot.columns, 2):
         disagree = pivot[model_a].to_numpy() != pivot[model_b].to_numpy()
+        left = metric_lookup.loc[model_a]
+        right = metric_lookup.loc[model_b]
+        differing_factors = _difference_signature(left, right)
+        source_factor = differing_factors[0] if len(differing_factors) == 1 else "combined"
         rows.append(
             {
                 "model_a": model_a,
                 "model_b": model_b,
+                "seed_a": int(left["seed"]),
+                "seed_b": int(right["seed"]),
+                "subset_fraction_a": float(left["subset_fraction"]),
+                "subset_fraction_b": float(right["subset_fraction"]),
+                "architecture_id_a": left.get("architecture_id", ""),
+                "architecture_id_b": right.get("architecture_id", ""),
+                "hidden_dims_label_a": left.get("hidden_dims_label", ""),
+                "hidden_dims_label_b": right.get("hidden_dims_label", ""),
+                "activation_a": left.get("activation", ""),
+                "activation_b": right.get("activation", ""),
+                "source_factor": source_factor,
+                "n_differing_factors": int(len(differing_factors)),
                 "disagreement_rate": float(disagree.mean()),
                 "agreement_rate": float(1.0 - disagree.mean()),
                 "n_samples": int(len(disagree)),
@@ -75,10 +102,34 @@ def compute_disagreement(
         )
 
     pd.DataFrame(rows).to_csv(run_path / "disagreement_summary.csv", index=False)
+    pairwise_frame = pd.DataFrame(rows)
+    if len(pairwise_frame):
+        factor_summary = (
+            pairwise_frame.groupby("source_factor")
+            .agg(
+                n_pairs=("model_a", "count"),
+                mean_disagreement_rate=("disagreement_rate", "mean"),
+                max_disagreement_rate=("disagreement_rate", "max"),
+                mean_agreement_rate=("agreement_rate", "mean"),
+            )
+            .reset_index()
+            .sort_values(["source_factor"])
+        )
+    else:
+        factor_summary = pd.DataFrame(
+            columns=[
+                "source_factor",
+                "n_pairs",
+                "mean_disagreement_rate",
+                "max_disagreement_rate",
+                "mean_agreement_rate",
+            ]
+        )
+    factor_summary.to_csv(run_path / "disagreement_by_factor.csv", index=False)
     sample_frame = pd.DataFrame(sample_rows)
     sample_frame.to_csv(run_path / "sample_disagreement.csv", index=False)
 
-    disagreement_values = pd.DataFrame(rows)["disagreement_rate"] if rows else pd.Series(dtype=float)
+    disagreement_values = pairwise_frame["disagreement_rate"] if len(pairwise_frame) else pd.Series(dtype=float)
     ambiguity = float(sample_frame["is_conflict"].mean()) if len(sample_frame) else 0.0
     summary = {
         "rashomon_metric": rashomon_metric,

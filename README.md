@@ -1,6 +1,6 @@
 # Model Multiplicity for Cyber Defense
 
-This is a test for studying model multiplicity in intrusion detection. It trains many neural classifiers on the same task, varies random seeds and training subsets, then measures:
+This is a test for studying model multiplicity in intrusion detection. It trains many neural classifiers on the same task, varies random seeds, training subsets, network sizes, and activation functions, then measures:
 
 - prediction disagreement, ambiguity, and pointwise conflict ratios between similarly good models
 - accuracy/F1 variability
@@ -83,6 +83,14 @@ python -m mmcyber.cli explain-disagree --run-dir runs/nslkdd_multiplicity --top-
 python -m mmcyber.cli plot --run-dir runs/nslkdd_multiplicity --top-n 20
 ```
 
+The plot step also exports a stable paper subset into
+`paper/Overleaf-Stand/figures/` automatically when that directory exists. To
+target a different LaTeX or Overleaf figure folder, pass it explicitly:
+
+```bash
+python -m mmcyber.cli plot --run-dir runs/nslkdd_multiplicity --top-n 20 --paper-dir /path/to/figures
+```
+
 For a quicker smoke test:
 
 ```bash
@@ -91,6 +99,18 @@ python -m mmcyber.cli disagree --run-dir runs/nslkdd_smoke --rashomon-tolerance 
 python -m mmcyber.cli shap --run-dir runs/nslkdd_smoke --max-background 8 --max-explain 8 --only-conflicts
 python -m mmcyber.cli explain-disagree --run-dir runs/nslkdd_smoke --top-k 5
 python -m mmcyber.cli plot --run-dir runs/nslkdd_smoke --top-n 5
+```
+
+To override architecture variants from the command line, pass comma-separated hidden-layer lists:
+
+```bash
+python -m mmcyber.cli train --config configs/default.yaml --hidden-dims-variants 64,32 128,64 256,128
+```
+
+To override activation variants from the command line:
+
+```bash
+python -m mmcyber.cli train --config configs/default.yaml --activation-variants relu tanh leaky_relu
 ```
 
 The NSL-KDD files are downloaded automatically into `data/raw/nsl-kdd/` on the first run. `data/` and `runs/` are intentionally not committed.
@@ -103,6 +123,7 @@ The NSL-KDD files are downloaded automatically into `data/raw/nsl-kdd/` on the f
 - `preprocessor.joblib`: fitted preprocessing pipeline
 - `test_predictions.csv`: per-model predictions and probabilities
 - `metrics.csv`: model-level metrics
+- `disagreement_by_factor.csv`: pairwise disagreement aggregated by `seed`, `subset_fraction`, `architecture_id`, `activation`, or `combined`
 - `multiplicity_summary.csv`: Rashomon-set size, ambiguity, mean/max conflict ratio, mean/max pairwise disagreement
 - `disagreement_summary.csv`: pairwise disagreement between models in the Rashomon set
 - `sample_disagreement.csv`: per-sample entropy, majority vote, conflict ratio, and conflict indicator
@@ -113,6 +134,7 @@ The NSL-KDD files are downloaded automatically into `data/raw/nsl-kdd/` on the f
 - `shap_variability.csv`: BA-style per-sample/per-feature SHAP range, variance, and sign instability across models
 - `shap_variability_correlations.csv`: Spearman correlations between conflict ratio and SHAP instability metrics
 - `plots/*.png` and `plots/*.pdf`: publication-friendly quick-look plots
+- `paper/Overleaf-Stand/figures/results_*.pdf`: auto-exported paper figures with stable filenames
 
 ## Plots
 
@@ -120,7 +142,10 @@ The NSL-KDD files are downloaded automatically into `data/raw/nsl-kdd/` on the f
 
 - `metrics_by_model`: accuracy, macro-F1, and log-loss per model
 - `macro_f1_by_subset`: subset-size trend when multiple subset fractions exist
+- `macro_f1_by_architecture`: average macro-F1 trend across network-size variants
+- `macro_f1_by_activation`: average macro-F1 trend across activation variants
 - `decision_disagreement_heatmap`: pairwise prediction disagreement
+- `disagreement_by_factor`: direct comparison of how much `seed`, `subset_fraction`, `network size`, and `activation` contribute to disagreement
 - `multiplicity_summary`: ambiguity/conflict/disagreement overview
 - `conflict_ratio`: pointwise predictive multiplicity distribution
 - `sample_vote_entropy`: per-sample ensemble uncertainty
@@ -136,12 +161,19 @@ The NSL-KDD files are downloaded automatically into `data/raw/nsl-kdd/` on the f
 - `ba_correlations_<class>`: BA-style correlation matrix for conflict ratio, sign instability, SHAP range, and SHAP variance
 - `ba_scatter_<class>/ba_range_*` and `ba_scatter_<class>/ba_variance_*`: per-feature conflict-ratio scatterplots colored by sign instability
 
+The paper export keeps a curated subset under fixed names such as
+`results_disagreement_by_factor.pdf`, `results_macro_f1_by_activation.pdf`, and
+`results_feature_ranking_attack.pdf`, so the figures can be dropped into the
+paper without manual renaming.
+
 ## Research Notes
 
 Useful knobs:
 
 - `seeds`: changes initialization, data loader order, and subset sampling
 - `subset_fractions`: trains models on random fractions of the training set
+- `hidden_dims_variants`: trains multiple network-size variants within the same experiment
+- `activation_variants`: trains multiple activation-function variants within the same experiment
 - `subset_strategy`: currently `stratified`, preserving class balance as far as possible
 - `task`: `binary` maps attacks vs normal; `multiclass` keeps attack categories
 - `--rashomon-tolerance`: defines which models count as similarly good, using `best(metric) - tolerance`

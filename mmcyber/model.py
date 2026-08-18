@@ -4,12 +4,26 @@ import torch
 from torch import nn
 
 
+def resolve_activation(name: str) -> nn.Module:
+    normalized = name.lower()
+    activations = {
+        "relu": nn.ReLU,
+        "tanh": nn.Tanh,
+        "leaky_relu": nn.LeakyReLU,
+    }
+    if normalized not in activations:
+        available = ", ".join(sorted(activations))
+        raise ValueError(f"Unknown activation {name!r}; available: {available}")
+    return activations[normalized]()
+
+
 class MLPClassifier(nn.Module):
     def __init__(
         self,
         input_dim: int,
         output_dim: int,
         hidden_dims: list[int],
+        activation: str,
         dropout: float,
     ) -> None:
         super().__init__()
@@ -19,7 +33,7 @@ class MLPClassifier(nn.Module):
             layers.extend(
                 [
                     nn.Linear(previous_dim, hidden_dim),
-                    nn.ReLU(),
+                    resolve_activation(activation),
                     nn.BatchNorm1d(hidden_dim),
                     nn.Dropout(dropout),
                 ]

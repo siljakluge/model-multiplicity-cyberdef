@@ -11,11 +11,16 @@ training:
   seeds: [1, 2]
   subset_fractions: [0.1]
   subset_strategy: stratified
+  hidden_dims_variants:
+    - [32]
+    - [64, 32]
+  activation_variants: [relu, tanh, leaky_relu]
   epochs: 1
   batch_size: 512
   learning_rate: 0.001
   weight_decay: 0.0001
   hidden_dims: [32]
+  activation: relu
   dropout: 0.1
   patience: 1
   device: cpu

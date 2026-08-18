@@ -17,11 +17,24 @@ def _load_model(path: Path, device: torch.device) -> MLPClassifier:
         input_dim=checkpoint["input_dim"],
         output_dim=checkpoint["output_dim"],
         hidden_dims=checkpoint["hidden_dims"],
+        activation=checkpoint.get("activation", "relu"),
         dropout=checkpoint["dropout"],
     ).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return model
+
+
+def _model_metadata(path: Path) -> dict:
+    checkpoint = torch.load(path, map_location="cpu")
+    hidden_dims = checkpoint["hidden_dims"]
+    return {
+        "architecture_id": checkpoint.get("architecture_id", ""),
+        "hidden_dims_label": checkpoint.get("hidden_dims_label", "x".join(str(dim) for dim in hidden_dims)),
+        "activation": checkpoint.get("activation", "relu"),
+        "seed": checkpoint.get("seed"),
+        "subset_fraction": checkpoint.get("subset_fraction"),
+    }
 
 
 def _select_explain_indices(run_path: Path, n_test: int, max_explain: int, seed: int, only_conflicts: bool) -> np.ndarray:
@@ -70,6 +83,7 @@ def compute_shap(
 
     for model_path in sorted((run_path / "models").glob("*.pt")):
         model = _load_model(model_path, device)
+        metadata = _model_metadata(model_path)
         explainer = shap.DeepExplainer(model, background)
         shap_values = explainer.shap_values(explain)
         values = np.asarray(shap_values)
@@ -101,6 +115,7 @@ def compute_shap(
                 summary_rows.append(
                     {
                         "model_id": model_path.stem,
+                        **metadata,
                         "class_name": class_name,
                         "rank": rank,
                         "feature": data.feature_names[feature_idx],
@@ -112,6 +127,7 @@ def compute_shap(
                     value_rows.append(
                         {
                             "model_id": model_path.stem,
+                            **metadata,
                             "sample_id": int(sample_id),
                             "class_name": class_name,
                             "feature": feature_name,

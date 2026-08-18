@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import shutil
 
 import numpy as np
 import pandas as pd
@@ -25,6 +26,51 @@ def _save(fig, path: Path) -> None:
     # basenames so LaTeX and quick file browsing can use the same plot set.
     fig.savefig(path, dpi=180, bbox_inches="tight")
     fig.savefig(path.with_suffix(".pdf"), bbox_inches="tight")
+
+
+def _default_paper_figures_dir(run_dir: str | Path) -> Path | None:
+    run_path = Path(run_dir).resolve()
+    repo_root = run_path.parent.parent if run_path.parent.name == "runs" else run_path.parent
+    candidate = repo_root / "paper" / "Overleaf-Stand" / "figures"
+    return candidate if candidate.parent.exists() else None
+
+
+def _copy_if_exists(source: Path, target: Path) -> None:
+    if not source.exists():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+
+
+def export_paper_figures(run_dir: str | Path, out_dir: str | Path | None = None, paper_dir: str | Path | None = None) -> None:
+    run_path = Path(run_dir)
+    plots_dir = Path(out_dir) if out_dir else run_path / "plots"
+    target_dir = Path(paper_dir) if paper_dir else _default_paper_figures_dir(run_dir)
+    if target_dir is None:
+        return
+
+    figure_map = {
+        "metrics_by_model.pdf": "results_metrics_by_model.pdf",
+        "macro_f1_by_subset.pdf": "results_macro_f1_by_subset.pdf",
+        "macro_f1_by_architecture.pdf": "results_macro_f1_by_architecture.pdf",
+        "macro_f1_by_activation.pdf": "results_macro_f1_by_activation.pdf",
+        "decision_disagreement_heatmap.pdf": "results_decision_disagreement_heatmap.pdf",
+        "disagreement_by_factor.pdf": "results_disagreement_by_factor.pdf",
+        "conflict_ratio.pdf": "results_conflict_ratio.pdf",
+        "explanation_mean_abs_shap_cosine_distance.pdf": "results_explanation_cosine_distance.pdf",
+        "explanation_top_k_jaccard.pdf": "results_explanation_topk_jaccard.pdf",
+        "shap_value_range_attack.pdf": "results_shap_value_range_attack.pdf",
+        "shap_value_range_normal.pdf": "results_shap_value_range_normal.pdf",
+        "spearman_conflict_vs_shap_range_heatmap.pdf": "results_spearman_conflict_shap_range.pdf",
+        "spearman_conflict_vs_shap_variance_heatmap.pdf": "results_spearman_conflict_shap_variance.pdf",
+        "spearman_conflict_vs_sign_instability_heatmap.pdf": "results_spearman_conflict_sign_instability.pdf",
+        "ba_feature_ranking_attack.pdf": "results_feature_ranking_attack.pdf",
+        "ba_feature_ranking_normal.pdf": "results_feature_ranking_normal.pdf",
+        "ba_heatmap_sign_instability_attack.pdf": "results_sign_instability_attack.pdf",
+        "ba_heatmap_sign_instability_normal.pdf": "results_sign_instability_normal.pdf",
+    }
+    for source_name, target_name in figure_map.items():
+        _copy_if_exists(plots_dir / source_name, target_dir / target_name)
 
 
 def _model_order(frame: pd.DataFrame) -> list[str]:
@@ -61,7 +107,7 @@ def plot_metrics(run_dir: str | Path, out_dir: str | Path | None = None) -> None
     metrics = pd.read_csv(run_path / "metrics.csv")
 
     long = metrics.melt(
-        id_vars=["model_id", "seed", "subset_fraction"],
+        id_vars=["model_id", "seed", "subset_fraction", "architecture_id", "hidden_dims_label", "activation"],
         value_vars=["accuracy", "macro_f1", "log_loss"],
         var_name="metric",
         value_name="value",
@@ -89,6 +135,32 @@ def plot_metrics(run_dir: str | Path, out_dir: str | Path | None = None) -> None
         ax.set_xlabel("training subset fraction")
         ax.set_ylabel("macro-F1")
         _save(fig, out_path / "macro_f1_by_subset.png")
+        plt.close(fig)
+
+    if "hidden_dims_label" in metrics.columns and metrics["hidden_dims_label"].nunique() > 1:
+        fig, ax = plt.subplots(figsize=(7.5, 4.5))
+        architecture_summary = (
+            metrics.groupby("hidden_dims_label", as_index=False)
+            .agg(macro_f1=("macro_f1", "mean"), accuracy=("accuracy", "mean"))
+        )
+        sns.barplot(data=architecture_summary, x="hidden_dims_label", y="macro_f1", ax=ax)
+        ax.set_title("Macro-F1 Across Network Sizes")
+        ax.set_xlabel("hidden layer sizes")
+        ax.set_ylabel("mean macro-F1")
+        _save(fig, out_path / "macro_f1_by_architecture.png")
+        plt.close(fig)
+
+    if "activation" in metrics.columns and metrics["activation"].nunique() > 1:
+        fig, ax = plt.subplots(figsize=(7.5, 4.5))
+        activation_summary = (
+            metrics.groupby("activation", as_index=False)
+            .agg(macro_f1=("macro_f1", "mean"), accuracy=("accuracy", "mean"))
+        )
+        sns.barplot(data=activation_summary, x="activation", y="macro_f1", ax=ax)
+        ax.set_title("Macro-F1 Across Activation Functions")
+        ax.set_xlabel("activation")
+        ax.set_ylabel("mean macro-F1")
+        _save(fig, out_path / "macro_f1_by_activation.png")
         plt.close(fig)
 
 
@@ -158,6 +230,18 @@ def plot_decision_disagreement(run_dir: str | Path, out_dir: str | Path | None =
         ax.tick_params(axis="x", rotation=30)
         _save(fig, out_path / "multiplicity_summary.png")
         plt.close(fig)
+
+    factor_path = run_path / "disagreement_by_factor.csv"
+    if factor_path.exists():
+        factor_summary = pd.read_csv(factor_path)
+        if len(factor_summary):
+            fig, ax = plt.subplots(figsize=(7.5, 4.5))
+            sns.barplot(data=factor_summary, x="source_factor", y="mean_disagreement_rate", ax=ax)
+            ax.set_title("Mean Disagreement by Multiplicity Source")
+            ax.set_xlabel("source of variation")
+            ax.set_ylabel("mean pairwise disagreement")
+            _save(fig, out_path / "disagreement_by_factor.png")
+            plt.close(fig)
 
 
 def plot_shap(run_dir: str | Path, out_dir: str | Path | None = None, top_n: int = 20) -> None:
@@ -500,9 +584,15 @@ def plot_ba_correlation_matrices(
         plt.close(fig)
 
 
-def plot_all(run_dir: str | Path, out_dir: str | Path | None = None, top_n: int = 20) -> None:
+def plot_all(
+    run_dir: str | Path,
+    out_dir: str | Path | None = None,
+    top_n: int = 20,
+    paper_dir: str | Path | None = None,
+) -> None:
     plot_metrics(run_dir, out_dir)
     plot_decision_disagreement(run_dir, out_dir)
     plot_shap(run_dir, out_dir, top_n=top_n)
     plot_explanation_disagreement(run_dir, out_dir)
     plot_shap_variability(run_dir, out_dir, top_n=top_n)
+    export_paper_figures(run_dir, out_dir=out_dir, paper_dir=paper_dir)

@@ -10,6 +10,24 @@ from mmcyber.train import run_training
 from mmcyber.utils import load_config
 
 
+def _parse_hidden_dims_variants(values: list[str] | None) -> list[list[int]] | None:
+    if not values:
+        return None
+    variants = []
+    for value in values:
+        dims = [int(part) for part in value.split(",") if part.strip()]
+        if not dims:
+            raise ValueError(f"Invalid hidden-dims variant {value!r}")
+        variants.append(dims)
+    return variants
+
+
+def _parse_activation_variants(values: list[str] | None) -> list[str] | None:
+    if not values:
+        return None
+    return [value.strip() for value in values if value.strip()]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="mmcyber")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -18,6 +36,8 @@ def main() -> None:
     train_parser.add_argument("--config", required=True)
     train_parser.add_argument("--seeds", nargs="*", type=int)
     train_parser.add_argument("--subset-fractions", nargs="*", type=float)
+    train_parser.add_argument("--hidden-dims-variants", nargs="*")
+    train_parser.add_argument("--activation-variants", nargs="*")
 
     disagree_parser = subparsers.add_parser("disagree")
     disagree_parser.add_argument("--run-dir", required=True)
@@ -38,11 +58,18 @@ def main() -> None:
     plot_parser.add_argument("--run-dir", required=True)
     plot_parser.add_argument("--out-dir")
     plot_parser.add_argument("--top-n", type=int, default=20)
+    plot_parser.add_argument("--paper-dir")
 
     args = parser.parse_args()
     if args.command == "train":
         config = load_config(args.config)
-        run_training(config, seeds=args.seeds, subset_fractions=args.subset_fractions)
+        run_training(
+            config,
+            seeds=args.seeds,
+            subset_fractions=args.subset_fractions,
+            hidden_dims_variants=_parse_hidden_dims_variants(args.hidden_dims_variants),
+            activation_variants=_parse_activation_variants(args.activation_variants),
+        )
     elif args.command == "disagree":
         compute_disagreement(
             args.run_dir,
@@ -59,7 +86,7 @@ def main() -> None:
     elif args.command == "explain-disagree":
         compute_explanation_disagreement(args.run_dir, top_k=args.top_k)
     elif args.command == "plot":
-        plot_all(args.run_dir, out_dir=args.out_dir, top_n=args.top_n)
+        plot_all(args.run_dir, out_dir=args.out_dir, top_n=args.top_n, paper_dir=args.paper_dir)
 
 
 if __name__ == "__main__":

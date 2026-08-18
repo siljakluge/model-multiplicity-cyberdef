@@ -15,6 +15,14 @@ from mmcyber.model import MLPClassifier, resolve_device
 from mmcyber.utils import save_json, set_seed
 
 
+def _hidden_dims_label(hidden_dims: list[int]) -> str:
+    return "x".join(str(dim) for dim in hidden_dims)
+
+
+def _activation_variants(config: dict) -> list[str]:
+    return config["training"].get("activation_variants", [config["training"].get("activation", "relu")])
+
+
 def _loader(x: np.ndarray, y: np.ndarray, batch_size: int, shuffle: bool) -> DataLoader:
     dataset = TensorDataset(torch.from_numpy(x), torch.from_numpy(y))
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
@@ -36,6 +44,9 @@ def train_one_model(
     config: dict,
     seed: int,
     subset_fraction: float,
+    hidden_dims: list[int],
+    activation: str,
+    architecture_id: str,
     model_id: str,
     run_dir: Path,
 ) -> dict:
@@ -53,7 +64,8 @@ def train_one_model(
     model = MLPClassifier(
         input_dim=data.x_train.shape[1],
         output_dim=output_dim,
-        hidden_dims=training_config["hidden_dims"],
+        hidden_dims=hidden_dims,
+        activation=activation,
         dropout=training_config["dropout"],
     ).to(device)
 
@@ -110,7 +122,10 @@ def train_one_model(
             "model_state_dict": model.state_dict(),
             "input_dim": data.x_train.shape[1],
             "output_dim": output_dim,
-            "hidden_dims": training_config["hidden_dims"],
+            "hidden_dims": hidden_dims,
+            "activation": activation,
+            "architecture_id": architecture_id,
+            "hidden_dims_label": _hidden_dims_label(hidden_dims),
             "dropout": training_config["dropout"],
             "seed": seed,
             "subset_fraction": subset_fraction,
@@ -123,6 +138,9 @@ def train_one_model(
         "model_id": model_id,
         "seed": seed,
         "subset_fraction": subset_fraction,
+        "architecture_id": architecture_id,
+        "hidden_dims_label": _hidden_dims_label(hidden_dims),
+        "activation": activation,
         "subset_size": int(len(subset_idx)),
         "model_path": str(model_path),
         "accuracy": accuracy_score(data.y_test, pred),
@@ -133,7 +151,13 @@ def train_one_model(
     }
 
 
-def run_training(config: dict, seeds: list[int] | None = None, subset_fractions: list[float] | None = None) -> None:
+def run_training(
+    config: dict,
+    seeds: list[int] | None = None,
+    subset_fractions: list[float] | None = None,
+    hidden_dims_variants: list[list[int]] | None = None,
+    activation_variants: list[str] | None = None,
+) -> None:
     run_dir = Path(config["run_dir"])
     run_dir.mkdir(parents=True, exist_ok=True)
     save_json(config, run_dir / "config.resolved.json")
@@ -141,30 +165,57 @@ def run_training(config: dict, seeds: list[int] | None = None, subset_fractions:
     data = prepare_dataset(config, run_dir)
     seeds = seeds or config["training"]["seeds"]
     subset_fractions = subset_fractions or config["training"]["subset_fractions"]
+    hidden_dims_variants = hidden_dims_variants or config["training"].get(
+        "hidden_dims_variants",
+        [config["training"]["hidden_dims"]],
+    )
+    activation_variants = activation_variants or _activation_variants(config)
 
     all_metrics = []
     prediction_frames = []
     for seed in tqdm(seeds, desc="seeds"):
         for fraction in subset_fractions:
-            # The model_id encodes the experimental factors used later by
-            # disagreement, SHAP and plotting steps.
-            model_id = f"seed{seed}_frac{str(fraction).replace('.', 'p')}"
-            result = train_one_model(data, config, seed, fraction, model_id, run_dir)
-            probs = result.pop("probs")
-            pred = result.pop("pred")
-            all_metrics.append(result)
+            for hidden_dims in hidden_dims_variants:
+                for activation in activation_variants:
+                    hidden_dims = list(hidden_dims)
+                    architecture_id = f"arch_{_hidden_dims_label(hidden_dims)}"
+                    # The model_id encodes all experimental factors used later by
+                    # disagreement, SHAP and plotting steps.
+                    model_id = (
+                        f"seed{seed}_frac{str(fraction).replace('.', 'p')}"
+                        f"_{architecture_id}_act_{activation}"
+                    )
+                    result = train_one_model(
+                        data,
+                        config,
+                        seed,
+                        fraction,
+                        hidden_dims,
+                        activation,
+                        architecture_id,
+                        model_id,
+                        run_dir,
+                    )
+                    probs = result.pop("probs")
+                    pred = result.pop("pred")
+                    all_metrics.append(result)
 
-            frame = pd.DataFrame(
-                {
-                    "sample_id": np.arange(len(data.y_test)),
-                    "y_true": data.y_test,
-                    "model_id": model_id,
-                    "y_pred": pred,
-                }
-            )
-            for class_idx, class_name in enumerate(data.class_names):
-                frame[f"prob_{class_name}"] = probs[:, class_idx]
-            prediction_frames.append(frame)
+                    frame = pd.DataFrame(
+                        {
+                            "sample_id": np.arange(len(data.y_test)),
+                            "y_true": data.y_test,
+                            "model_id": model_id,
+                            "seed": seed,
+                            "subset_fraction": fraction,
+                            "architecture_id": architecture_id,
+                            "hidden_dims_label": _hidden_dims_label(hidden_dims),
+                            "activation": activation,
+                            "y_pred": pred,
+                        }
+                    )
+                    for class_idx, class_name in enumerate(data.class_names):
+                        frame[f"prob_{class_name}"] = probs[:, class_idx]
+                    prediction_frames.append(frame)
 
     pd.DataFrame(all_metrics).to_csv(run_dir / "metrics.csv", index=False)
     pd.concat(prediction_frames, ignore_index=True).to_csv(run_dir / "test_predictions.csv", index=False)

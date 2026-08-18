@@ -10,11 +10,11 @@ Categorical features, namely protocol type, service, and flag, are transformed w
 
 \subsection{Model Family}
 
-Each classifier is a feed-forward multilayer perceptron implemented in PyTorch. The architecture is configurable through the experiment configuration file. Hidden layers use linear transformations, ReLU activations, batch normalization, and dropout, followed by a final linear classification layer. Models are trained with AdamW and cross-entropy loss. Early stopping is based on validation loss.
+Each classifier is a feed-forward multilayer perceptron implemented in PyTorch. The architecture is configurable through the experiment configuration file. Hidden layers use linear transformations, a configurable activation function, batch normalization, and dropout, followed by a final linear classification layer. Models are trained with AdamW and cross-entropy loss. Early stopping is based on validation loss.
 
 \subsection{Generating a Candidate Model Set}
 
-To induce model multiplicity, the pipeline trains multiple models on the same prediction task while varying random seeds and, optionally, the fraction of the training set. For subset experiments, examples are sampled with a stratified strategy so that class balance is approximately preserved. Each trained model is evaluated on the same test split, and the pipeline stores per-model metrics as well as per-sample predictions and predicted class probabilities.
+To induce model multiplicity, the pipeline trains multiple models on the same prediction task while varying random seeds, the fraction of the training set, network size, and activation function. For subset experiments, examples are sampled with a stratified strategy so that class balance is approximately preserved. Each trained model is evaluated on the same test split, and the pipeline stores per-model metrics as well as per-sample predictions and predicted class probabilities.
 
 \subsection{Rashomon-Set Selection}
 
