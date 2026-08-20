@@ -8,8 +8,25 @@ import pandas as pd
 
 
 def _difference_signature(left: pd.Series, right: pd.Series) -> tuple[str, ...]:
+    if (
+        "comparison_block" in left.index
+        and "comparison_block" in right.index
+        and left["comparison_block"] == right["comparison_block"]
+        and left["comparison_block"] not in {"", "baseline", "grid"}
+    ):
+        return (str(left["comparison_block"]),)
     factors = []
-    for column in ["seed", "subset_fraction", "architecture_id", "hidden_dims_label", "activation"]:
+    for column in [
+        "model_family",
+        "seed",
+        "train_seed",
+        "data_seed",
+        "subset_fraction",
+        "subset_strategy",
+        "architecture_id",
+        "hidden_dims_label",
+        "activation",
+    ]:
         if column in left.index and column in right.index and left[column] != right[column]:
             if column == "hidden_dims_label":
                 continue
@@ -39,7 +56,19 @@ def compute_disagreement(
     rashomon_metric: str = "accuracy",
 ) -> None:
     run_path = Path(run_dir)
-    predictions = pd.read_csv(run_path / "test_predictions.csv")
+    predictions = pd.read_csv(
+        run_path / "test_predictions.csv",
+        dtype={
+            "model_id": "string",
+            "architecture_id": "string",
+            "hidden_dims_label": "string",
+            "activation": "string",
+            "comparison_block": "string",
+            "model_family": "string",
+            "subset_strategy": "string",
+        },
+        low_memory=False,
+    )
     metrics = pd.read_csv(run_path / "metrics.csv")
     rashomon_models, best_score = _select_rashomon_models(metrics, rashomon_tolerance, rashomon_metric)
     predictions = predictions[predictions["model_id"].isin(rashomon_models)].copy()
@@ -61,6 +90,18 @@ def compute_disagreement(
                 "model_b": model_b,
                 "seed_a": int(left["seed"]),
                 "seed_b": int(right["seed"]),
+                "origin_seed_a": int(left.get("origin_seed", left["seed"])),
+                "origin_seed_b": int(right.get("origin_seed", right["seed"])),
+                "train_seed_a": int(left.get("train_seed", left["seed"])),
+                "train_seed_b": int(right.get("train_seed", right["seed"])),
+                "data_seed_a": int(left.get("data_seed", left["seed"])),
+                "data_seed_b": int(right.get("data_seed", right["seed"])),
+                "model_family_a": left.get("model_family", "mlp"),
+                "model_family_b": right.get("model_family", "mlp"),
+                "comparison_block_a": left.get("comparison_block", ""),
+                "comparison_block_b": right.get("comparison_block", ""),
+                "subset_strategy_a": left.get("subset_strategy", "stratified"),
+                "subset_strategy_b": right.get("subset_strategy", "stratified"),
                 "subset_fraction_a": float(left["subset_fraction"]),
                 "subset_fraction_b": float(right["subset_fraction"]),
                 "architecture_id_a": left.get("architecture_id", ""),

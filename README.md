@@ -1,6 +1,6 @@
 # Model Multiplicity for Cyber Defense
 
-This is a test for studying model multiplicity in intrusion detection. It trains many neural classifiers on the same task, varies random seeds, training subsets, network sizes, and activation functions, then measures:
+This is a test for studying model multiplicity in intrusion detection. It trains many neural classifiers on the same task, varies random seeds, training data, joint network-size/activation choices, and XGBoost baselines, then measures:
 
 - prediction disagreement, ambiguity, and pointwise conflict ratios between similarly good models
 - accuracy/F1 variability
@@ -77,10 +77,19 @@ python -m mmcyber.cli --help
 
 ```bash
 python -m mmcyber.cli train --config configs/default.yaml
-python -m mmcyber.cli disagree --run-dir runs/nslkdd_multiplicity --rashomon-tolerance 0.015
-python -m mmcyber.cli shap --run-dir runs/nslkdd_multiplicity --max-background 128 --max-explain 256 --only-conflicts
-python -m mmcyber.cli explain-disagree --run-dir runs/nslkdd_multiplicity --top-k 20
-python -m mmcyber.cli plot --run-dir runs/nslkdd_multiplicity --top-n 20
+python -m mmcyber.cli disagree --run-dir runs/nslkdd_multiplicity_seed1 --rashomon-tolerance 0.015
+python -m mmcyber.cli shap --run-dir runs/nslkdd_multiplicity_seed1 --max-background 128 --max-explain 256 --only-conflicts
+python -m mmcyber.cli explain-disagree --run-dir runs/nslkdd_multiplicity_seed1 --top-k 20
+python -m mmcyber.cli plot --run-dir runs/nslkdd_multiplicity_seed1 --top-n 20
+```
+
+The default config uses a factorized design around one `origin_seed`. Results,
+model IDs, and run folders are named with that seed so repeated experiments are
+directly comparable and can later feed significance tests. To switch the anchor
+seed for one run:
+
+```bash
+python -m mmcyber.cli train --config configs/default.yaml --origin-seed 7
 ```
 
 The plot step also exports a stable paper subset into
@@ -88,17 +97,17 @@ The plot step also exports a stable paper subset into
 target a different LaTeX or Overleaf figure folder, pass it explicitly:
 
 ```bash
-python -m mmcyber.cli plot --run-dir runs/nslkdd_multiplicity --top-n 20 --paper-dir /path/to/figures
+python -m mmcyber.cli plot --run-dir runs/nslkdd_multiplicity_seed1 --top-n 20 --paper-dir /path/to/figures
 ```
 
 For a quicker smoke test:
 
 ```bash
 python -m mmcyber.cli train --config configs/smoke.yaml
-python -m mmcyber.cli disagree --run-dir runs/nslkdd_smoke --rashomon-tolerance 1.0
-python -m mmcyber.cli shap --run-dir runs/nslkdd_smoke --max-background 8 --max-explain 8 --only-conflicts
-python -m mmcyber.cli explain-disagree --run-dir runs/nslkdd_smoke --top-k 5
-python -m mmcyber.cli plot --run-dir runs/nslkdd_smoke --top-n 5
+python -m mmcyber.cli disagree --run-dir runs/nslkdd_smoke_seed1 --rashomon-tolerance 1.0
+python -m mmcyber.cli shap --run-dir runs/nslkdd_smoke_seed1 --max-background 8 --max-explain 8 --only-conflicts
+python -m mmcyber.cli explain-disagree --run-dir runs/nslkdd_smoke_seed1 --top-k 5
+python -m mmcyber.cli plot --run-dir runs/nslkdd_smoke_seed1 --top-n 5
 ```
 
 To override architecture variants from the command line, pass comma-separated hidden-layer lists:
@@ -117,13 +126,15 @@ The NSL-KDD files are downloaded automatically into `data/raw/nsl-kdd/` on the f
 
 ## Outputs
 
-`runs/nslkdd_multiplicity/`
+`runs/nslkdd_multiplicity_seed1/`
 
 - `models/*.pt`: trained PyTorch models
+- `models/*.joblib`: trained XGBoost comparison models
 - `preprocessor.joblib`: fitted preprocessing pipeline
+- `training_plan.csv`: explicit per-model experiment plan anchored to the origin seed
 - `test_predictions.csv`: per-model predictions and probabilities
 - `metrics.csv`: model-level metrics
-- `disagreement_by_factor.csv`: pairwise disagreement aggregated by `seed`, `subset_fraction`, `architecture_id`, `activation`, or `combined`
+- `disagreement_by_factor.csv`: pairwise disagreement aggregated by factor blocks such as `seed`, `bootstrap`, `architecture_activation`, `xgboost`, or `combined`
 - `multiplicity_summary.csv`: Rashomon-set size, ambiguity, mean/max conflict ratio, mean/max pairwise disagreement
 - `disagreement_summary.csv`: pairwise disagreement between models in the Rashomon set
 - `sample_disagreement.csv`: per-sample entropy, majority vote, conflict ratio, and conflict indicator
@@ -145,7 +156,7 @@ The NSL-KDD files are downloaded automatically into `data/raw/nsl-kdd/` on the f
 - `macro_f1_by_architecture`: average macro-F1 trend across network-size variants
 - `macro_f1_by_activation`: average macro-F1 trend across activation variants
 - `decision_disagreement_heatmap`: pairwise prediction disagreement
-- `disagreement_by_factor`: direct comparison of how much `seed`, `subset_fraction`, `network size`, and `activation` contribute to disagreement
+- `disagreement_by_factor`: direct comparison of how much `seed`, `bootstrap resampling`, joint `network size + activation`, and `xgboost` contribute to disagreement
 - `multiplicity_summary`: ambiguity/conflict/disagreement overview
 - `conflict_ratio`: pointwise predictive multiplicity distribution
 - `sample_vote_entropy`: per-sample ensemble uncertainty
@@ -171,10 +182,15 @@ paper without manual renaming.
 Useful knobs:
 
 - `seeds`: changes initialization, data loader order, and subset sampling
+- `origin_seed`: stable anchor for naming runs and grouping repeated experiments
+- `comparison_seeds`: alternate seeds used for seed-variation, bootstrap, and optional XGBoost comparison runs
 - `subset_fractions`: trains models on random fractions of the training set
+- `factorized_subset_fraction`: training fraction used by the factorized design
 - `hidden_dims_variants`: trains multiple network-size variants within the same experiment
-- `activation_variants`: trains multiple activation-function variants within the same experiment
-- `subset_strategy`: currently `stratified`, preserving class balance as far as possible
+- `architecture_variants`: defines the network sizes crossed with all activation variants in the joint architecture-activation block
+- `activation_variants`: defines the activation functions crossed with all architecture variants in the joint architecture-activation block
+- `subset_strategy`: `stratified` for ordinary subsets; bootstrap resampling is used automatically in the bootstrap comparison block
+- `training.xgboost.*`: controls the XGBoost comparison block
 - `task`: `binary` maps attacks vs normal; `multiclass` keeps attack categories
 - `--rashomon-tolerance`: defines which models count as similarly good, using `best(metric) - tolerance`
 - `--only-conflicts`: computes SHAP on datapoints with `conflict_ratio > 0`, matching the Bachelorarbeit-style analysis

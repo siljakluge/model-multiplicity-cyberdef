@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 import torch
+import xgboost as xgb
 
 from mmcyber.data import prepare_dataset
 from mmcyber.model import MLPClassifier, resolve_device
 from mmcyber.utils import load_config
 
 
-def _load_model(path: Path, device: torch.device) -> MLPClassifier:
+def _load_torch_model(path: Path, device: torch.device) -> MLPClassifier:
     checkpoint = torch.load(path, map_location=device)
     model = MLPClassifier(
         input_dim=checkpoint["input_dim"],
@@ -25,7 +27,7 @@ def _load_model(path: Path, device: torch.device) -> MLPClassifier:
     return model
 
 
-def _model_metadata(path: Path) -> dict:
+def _torch_model_metadata(path: Path) -> dict:
     checkpoint = torch.load(path, map_location="cpu")
     hidden_dims = checkpoint["hidden_dims"]
     return {
@@ -35,6 +37,62 @@ def _model_metadata(path: Path) -> dict:
         "seed": checkpoint.get("seed"),
         "subset_fraction": checkpoint.get("subset_fraction"),
     }
+
+
+def _load_joblib_model(path: Path):
+    artifact = joblib.load(path)
+    return artifact["model"]
+
+
+def _joblib_model_metadata(path: Path) -> dict:
+    artifact = joblib.load(path)
+    return {
+        "architecture_id": artifact.get("architecture_id", "xgboost"),
+        "hidden_dims_label": artifact.get("hidden_dims_label", "none"),
+        "activation": artifact.get("activation", "none"),
+        "seed": artifact.get("train_seed"),
+        "subset_fraction": artifact.get("subset_fraction"),
+    }
+
+
+def _normalize_shap_values(values: np.ndarray, n_classes: int) -> np.ndarray:
+    # SHAP returns different layouts across explainers and versions. Normalize
+    # everything to [class, sample, feature] so the downstream CSV export stays
+    # model-family agnostic.
+    if values.ndim == 2:
+        return values[np.newaxis, ...]
+    if values.ndim == 3 and values.shape[0] == 1:
+        return values
+    if values.ndim != 3:
+        raise ValueError(f"Unsupported SHAP output shape: {values.shape}")
+    if values.shape[0] == n_classes:
+        return values
+    if values.shape[-1] == n_classes:
+        return np.moveaxis(values, -1, 0)
+    if values.shape[1] == n_classes:
+        return np.moveaxis(values, 1, 0)
+    raise ValueError(f"Could not align SHAP output shape {values.shape} to {n_classes} classes")
+
+
+def _iter_model_artifacts(models_dir: Path) -> list[Path]:
+    return sorted(path for path in models_dir.glob("*") if path.suffix in {".pt", ".joblib"})
+
+
+def _xgboost_shap_values(model, explain_data: np.ndarray, n_classes: int) -> np.ndarray:
+    contributions = model.get_booster().predict(xgb.DMatrix(explain_data), pred_contribs=True)
+    values = np.asarray(contributions)
+    if values.ndim == 2:
+        # Binary XGBoost returns one contribution vector for the positive class
+        # plus a bias column. Mirror it to two class-specific tensors so the
+        # downstream export matches the MLP layout [class, sample, feature].
+        positive_values = values[:, :-1]
+        if n_classes == 2:
+            return np.stack([-positive_values, positive_values], axis=0)
+        return positive_values[np.newaxis, ...]
+    if values.ndim == 3:
+        # Multiclass XGBoost returns [sample, class, feature + bias].
+        return np.moveaxis(values[:, :, :-1], 1, 0)
+    raise ValueError(f"Unsupported XGBoost SHAP output shape: {values.shape} for {n_classes} classes")
 
 
 def _select_explain_indices(run_path: Path, n_test: int, max_explain: int, seed: int, only_conflicts: bool) -> np.ndarray:
@@ -80,22 +138,24 @@ def compute_shap(
     shap_dir.mkdir(parents=True, exist_ok=True)
     summary_rows = []
     value_rows = []
+    skipped_models = []
 
-    for model_path in sorted((run_path / "models").glob("*.pt")):
-        model = _load_model(model_path, device)
-        metadata = _model_metadata(model_path)
-        explainer = shap.DeepExplainer(model, background)
-        shap_values = explainer.shap_values(explain)
-        values = np.asarray(shap_values)
-
-        # SHAP returns either class-first or sample-first depending on version
-        # and model output shape; normalize to [class, sample, feature].
-        if values.ndim == 3 and values.shape[0] == len(data.class_names):
-            class_first_values = values
-        elif values.ndim == 3 and values.shape[-1] == len(data.class_names):
-            class_first_values = np.moveaxis(values, -1, 0)
+    for model_path in _iter_model_artifacts(run_path / "models"):
+        if model_path.suffix == ".pt":
+            model = _load_torch_model(model_path, device)
+            metadata = _torch_model_metadata(model_path)
+            explainer = shap.DeepExplainer(model, background)
+            shap_values = explainer.shap_values(explain)
+            values = np.asarray(shap_values)
+        elif model_path.suffix == ".joblib":
+            model = _load_joblib_model(model_path)
+            metadata = _joblib_model_metadata(model_path)
+            values = _xgboost_shap_values(model, data.x_test[explain_idx], len(data.class_names))
         else:
-            class_first_values = values[np.newaxis, ...]
+            skipped_models.append(model_path.name)
+            continue
+
+        class_first_values = _normalize_shap_values(np.asarray(values), len(data.class_names))
 
         np.savez_compressed(
             shap_dir / f"{model_path.stem}.npz",
@@ -134,6 +194,13 @@ def compute_shap(
                             "shap_value": float(class_first_values[class_idx, sample_pos, feature_idx]),
                         }
                     )
+
+    skipped_models.extend(
+        path.name for path in (run_path / "models").glob("*") if path.suffix not in {".pt", ".joblib"}
+    )
+    skipped_models = sorted(set(skipped_models))
+    if skipped_models:
+        pd.DataFrame({"skipped_model_artifact": skipped_models}).to_csv(run_path / "shap_skipped_models.csv", index=False)
 
     pd.DataFrame(summary_rows).to_csv(run_path / "shap_summary.csv", index=False)
     pd.DataFrame(value_rows).to_csv(run_path / "shap_values_long.csv.gz", index=False)

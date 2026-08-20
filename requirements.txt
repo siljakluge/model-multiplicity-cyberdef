@@ -8,3 +8,4 @@ seaborn>=0.13
 shap>=0.44
 torch>=2.1
 tqdm>=4.66
+xgboost>=2.1

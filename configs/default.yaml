@@ -1,5 +1,5 @@
-experiment_name: nslkdd_multiplicity
-run_dir: runs/nslkdd_multiplicity
+experiment_name: nslkdd_multiplicity_seed{origin_seed}
+run_dir: runs/nslkdd_multiplicity_seed{origin_seed}
 
 dataset:
   name: nsl_kdd
@@ -8,12 +8,28 @@ dataset:
   test_size: 0.2
 
 training:
+  design: factorized
+  origin_seed: 1
   seeds: [1, 2, 3, 4, 5]
+  comparison_seeds: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
   subset_fractions: [1.0, 0.75, 0.5]
   subset_strategy: stratified
+  factorized_subset_fraction: 1.0
   hidden_dims_variants:
+    - [32, 16]
     - [64, 32]
+    - [96, 48]
     - [128, 64]
+    - [160, 80]
+    - [192, 96]
+    - [256, 128]
+  architecture_variants:
+    - [32, 16]
+    - [64, 32]
+    - [96, 48]
+    - [128, 64]
+    - [160, 80]
+    - [192, 96]
     - [256, 128]
   activation_variants: [relu, tanh, leaky_relu]
   epochs: 20
@@ -25,3 +41,14 @@ training:
   dropout: 0.2
   patience: 5
   device: auto
+  xgboost:
+    enabled: true
+    seeds: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+    n_estimators: 200
+    max_depth: 6
+    learning_rate: 0.1
+    subsample: 1.0
+    colsample_bytree: 1.0
+    reg_lambda: 1.0
+    n_jobs: 1
+    tree_method: hist

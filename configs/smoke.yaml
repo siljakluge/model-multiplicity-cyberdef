@@ -1,5 +1,5 @@
-experiment_name: nslkdd_smoke
-run_dir: runs/nslkdd_smoke
+experiment_name: nslkdd_smoke_seed{origin_seed}
+run_dir: runs/nslkdd_smoke_seed{origin_seed}
 
 dataset:
   name: nsl_kdd
@@ -8,12 +8,29 @@ dataset:
   test_size: 0.2
 
 training:
+  design: factorized
+  origin_seed: 1
   seeds: [1, 2]
+  comparison_seeds: [2, 3]
   subset_fractions: [0.1]
   subset_strategy: stratified
+  factorized_subset_fraction: 0.1
   hidden_dims_variants:
-    - [32]
+    - [16]
+    - [24]
     - [64, 32]
+    - [32]
+    - [48, 24]
+    - [80, 40]
+    - [96, 48]
+  architecture_variants:
+    - [16]
+    - [24]
+    - [64, 32]
+    - [32]
+    - [48, 24]
+    - [80, 40]
+    - [96, 48]
   activation_variants: [relu, tanh, leaky_relu]
   epochs: 1
   batch_size: 512
@@ -24,3 +41,14 @@ training:
   dropout: 0.1
   patience: 1
   device: cpu
+  xgboost:
+    enabled: true
+    seeds: [2, 3]
+    n_estimators: 10
+    max_depth: 3
+    learning_rate: 0.2
+    subsample: 1.0
+    colsample_bytree: 1.0
+    reg_lambda: 1.0
+    n_jobs: 1
+    tree_method: hist

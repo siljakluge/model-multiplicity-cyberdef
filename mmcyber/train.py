@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 import torch
@@ -14,6 +15,11 @@ from mmcyber.data import PreparedData, prepare_dataset, stratified_subset_indice
 from mmcyber.model import MLPClassifier, resolve_device
 from mmcyber.utils import save_json, set_seed
 
+try:
+    from xgboost import XGBClassifier
+except ImportError:  # pragma: no cover - handled explicitly when used
+    XGBClassifier = None
+
 
 def _hidden_dims_label(hidden_dims: list[int]) -> str:
     return "x".join(str(dim) for dim in hidden_dims)
@@ -21,6 +27,189 @@ def _hidden_dims_label(hidden_dims: list[int]) -> str:
 
 def _activation_variants(config: dict) -> list[str]:
     return config["training"].get("activation_variants", [config["training"].get("activation", "relu")])
+
+
+def _comparison_seeds(config: dict, origin_seed: int) -> list[int]:
+    seeds = config["training"].get("comparison_seeds")
+    if seeds:
+        return [int(seed) for seed in seeds if int(seed) != origin_seed]
+    return [int(seed) for seed in config["training"].get("seeds", []) if int(seed) != origin_seed]
+
+
+def _bootstrap_indices(y: np.ndarray, fraction: float, seed: int) -> np.ndarray:
+    n_samples = max(1, int(round(len(y) * fraction)))
+    rng = np.random.default_rng(seed)
+    return rng.choice(len(y), size=n_samples, replace=True)
+
+
+def _training_subset(
+    data: PreparedData,
+    subset_fraction: float,
+    sample_seed: int,
+    subset_strategy: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if subset_strategy == "bootstrap":
+        subset_idx = _bootstrap_indices(data.y_train, subset_fraction, sample_seed)
+    else:
+        subset_idx = stratified_subset_indices(data.y_train, subset_fraction, sample_seed)
+    return data.x_train[subset_idx], data.y_train[subset_idx], subset_idx
+
+
+def _resolved_origin_seed(config: dict, origin_seed: int | None) -> int:
+    if origin_seed is not None:
+        return int(origin_seed)
+    return int(config["training"].get("origin_seed", config["training"]["seeds"][0]))
+
+
+def _resolve_run_dir(config: dict, origin_seed: int) -> Path:
+    run_dir = str(config["run_dir"]).format(origin_seed=origin_seed)
+    return Path(run_dir)
+
+
+def _resolve_experiment_name(config: dict, origin_seed: int) -> str:
+    return str(config.get("experiment_name", "experiment")).format(origin_seed=origin_seed)
+
+
+def _build_model_id(spec: dict) -> str:
+    parts = [
+        f"origin_seed{spec['origin_seed']}",
+        spec["comparison_block"],
+        spec["model_family"],
+    ]
+    if spec["comparison_block"] == "baseline":
+        parts.append("reference")
+    elif spec["comparison_block"] in {"seed", "xgboost"}:
+        parts.append(f"train_seed{spec['train_seed']}")
+    elif spec["comparison_block"] == "bootstrap":
+        parts.append(f"resample_seed{spec['data_seed']}")
+    elif spec["comparison_block"] == "architecture_activation":
+        parts.append(spec["architecture_id"])
+        parts.append(f"act_{spec['activation']}")
+    return "_".join(parts)
+
+
+def _default_architecture_variants(config: dict) -> list[list[int]]:
+    variants = config["training"].get("architecture_variants")
+    if variants:
+        return [list(variant) for variant in variants]
+    return [
+        list(hidden_dims)
+        for hidden_dims in config["training"].get("hidden_dims_variants", [config["training"]["hidden_dims"]])
+    ]
+
+
+def _mlp_spec(
+    *,
+    origin_seed: int,
+    comparison_block: str,
+    train_seed: int,
+    data_seed: int,
+    subset_strategy: str,
+    subset_fraction: float,
+    hidden_dims: list[int],
+    activation: str,
+) -> dict:
+    spec = {
+        "origin_seed": origin_seed,
+        "comparison_block": comparison_block,
+        "model_family": "mlp",
+        "train_seed": train_seed,
+        "data_seed": data_seed,
+        "subset_strategy": subset_strategy,
+        "subset_fraction": subset_fraction,
+        "hidden_dims": list(hidden_dims),
+        "activation": activation,
+        "architecture_id": f"arch_{_hidden_dims_label(list(hidden_dims))}",
+        "hidden_dims_label": _hidden_dims_label(list(hidden_dims)),
+    }
+    spec["model_id"] = _build_model_id(spec)
+    return spec
+
+
+def _xgboost_spec(origin_seed: int, train_seed: int, subset_fraction: float) -> dict:
+    spec = {
+        "origin_seed": origin_seed,
+        "comparison_block": "xgboost",
+        "model_family": "xgboost",
+        "train_seed": train_seed,
+        "data_seed": origin_seed,
+        "subset_strategy": "stratified",
+        "subset_fraction": subset_fraction,
+        "hidden_dims": [],
+        "activation": "none",
+        "architecture_id": "xgboost",
+        "hidden_dims_label": "none",
+    }
+    spec["model_id"] = _build_model_id(spec)
+    return spec
+
+
+def _factorized_specs(config: dict, origin_seed: int) -> list[dict]:
+    training_config = config["training"]
+    subset_fraction = float(training_config.get("factorized_subset_fraction", 1.0))
+    base_hidden_dims = list(training_config["hidden_dims"])
+    base_activation = training_config.get("activation", "relu")
+    comparison_seeds = _comparison_seeds(config, origin_seed)
+    specs = [
+        _mlp_spec(
+            origin_seed=origin_seed,
+            comparison_block="baseline",
+            train_seed=origin_seed,
+            data_seed=origin_seed,
+            subset_strategy="stratified",
+            subset_fraction=subset_fraction,
+            hidden_dims=base_hidden_dims,
+            activation=base_activation,
+        )
+    ]
+    specs.extend(
+        _mlp_spec(
+            origin_seed=origin_seed,
+            comparison_block="seed",
+            train_seed=seed,
+            data_seed=origin_seed,
+            subset_strategy="stratified",
+            subset_fraction=subset_fraction,
+            hidden_dims=base_hidden_dims,
+            activation=base_activation,
+        )
+        for seed in comparison_seeds
+    )
+    specs.extend(
+        _mlp_spec(
+            origin_seed=origin_seed,
+            comparison_block="bootstrap",
+            train_seed=origin_seed,
+            data_seed=seed,
+            subset_strategy="bootstrap",
+            subset_fraction=subset_fraction,
+            hidden_dims=base_hidden_dims,
+            activation=base_activation,
+        )
+        for seed in comparison_seeds
+    )
+    specs.extend(
+        _mlp_spec(
+            origin_seed=origin_seed,
+            comparison_block="architecture_activation",
+            train_seed=origin_seed,
+            data_seed=origin_seed,
+            subset_strategy="stratified",
+            subset_fraction=subset_fraction,
+            hidden_dims=hidden_dims,
+            activation=activation,
+        )
+        for hidden_dims in _default_architecture_variants(config)
+        for activation in _activation_variants(config)
+        if not (list(hidden_dims) == base_hidden_dims and activation == base_activation)
+    )
+    if training_config.get("xgboost", {}).get("enabled", False):
+        xgboost_seeds = training_config["xgboost"].get("seeds", comparison_seeds)
+        specs.extend(
+            _xgboost_spec(origin_seed=origin_seed, train_seed=int(seed), subset_fraction=subset_fraction)
+            for seed in xgboost_seeds
+        )
+    return specs
 
 
 def _loader(x: np.ndarray, y: np.ndarray, batch_size: int, shuffle: bool) -> DataLoader:
@@ -42,23 +231,22 @@ def _predict(model: nn.Module, x: np.ndarray, device: torch.device, batch_size: 
 def train_one_model(
     data: PreparedData,
     config: dict,
-    seed: int,
+    train_seed: int,
+    data_seed: int,
     subset_fraction: float,
+    subset_strategy: str,
     hidden_dims: list[int],
     activation: str,
     architecture_id: str,
     model_id: str,
+    origin_seed: int,
+    comparison_block: str,
     run_dir: Path,
 ) -> dict:
     training_config = config["training"]
-    set_seed(seed)
+    set_seed(train_seed)
     device = resolve_device(training_config.get("device", "auto"))
-    # Subset sampling is part of the Rashomon construction: varying both seed
-    # and training fraction creates models that are similar in performance but
-    # can disagree on individual samples.
-    subset_idx = stratified_subset_indices(data.y_train, subset_fraction, seed)
-    x_train = data.x_train[subset_idx]
-    y_train = data.y_train[subset_idx]
+    x_train, y_train, subset_idx = _training_subset(data, subset_fraction, data_seed, subset_strategy)
 
     output_dim = len(data.class_names)
     model = MLPClassifier(
@@ -127,7 +315,13 @@ def train_one_model(
             "architecture_id": architecture_id,
             "hidden_dims_label": _hidden_dims_label(hidden_dims),
             "dropout": training_config["dropout"],
-            "seed": seed,
+            "seed": train_seed,
+            "train_seed": train_seed,
+            "data_seed": data_seed,
+            "origin_seed": origin_seed,
+            "comparison_block": comparison_block,
+            "model_family": "mlp",
+            "subset_strategy": subset_strategy,
             "subset_fraction": subset_fraction,
             "class_names": data.class_names,
         },
@@ -136,7 +330,13 @@ def train_one_model(
 
     return {
         "model_id": model_id,
-        "seed": seed,
+        "seed": train_seed,
+        "train_seed": train_seed,
+        "data_seed": data_seed,
+        "origin_seed": origin_seed,
+        "comparison_block": comparison_block,
+        "model_family": "mlp",
+        "subset_strategy": subset_strategy,
         "subset_fraction": subset_fraction,
         "architecture_id": architecture_id,
         "hidden_dims_label": _hidden_dims_label(hidden_dims),
@@ -151,71 +351,201 @@ def train_one_model(
     }
 
 
+def train_one_xgboost(
+    data: PreparedData,
+    config: dict,
+    *,
+    model_id: str,
+    origin_seed: int,
+    train_seed: int,
+    data_seed: int,
+    subset_fraction: float,
+    subset_strategy: str,
+    comparison_block: str,
+    run_dir: Path,
+) -> dict:
+    if XGBClassifier is None:
+        raise ImportError("xgboost is not installed. Install project dependencies to use the XGBoost comparison block.")
+
+    training_config = config["training"]
+    xgb_config = training_config.get("xgboost", {})
+    x_train, y_train, subset_idx = _training_subset(data, subset_fraction, data_seed, subset_strategy)
+
+    params = {
+        "n_estimators": int(xgb_config.get("n_estimators", 200)),
+        "max_depth": int(xgb_config.get("max_depth", 6)),
+        "learning_rate": float(xgb_config.get("learning_rate", 0.1)),
+        "subsample": float(xgb_config.get("subsample", 1.0)),
+        "colsample_bytree": float(xgb_config.get("colsample_bytree", 1.0)),
+        "reg_lambda": float(xgb_config.get("reg_lambda", 1.0)),
+        "random_state": train_seed,
+        "n_jobs": int(xgb_config.get("n_jobs", 1)),
+        "tree_method": xgb_config.get("tree_method", "hist"),
+        "eval_metric": "mlogloss" if len(data.class_names) > 2 else "logloss",
+    }
+    if len(data.class_names) > 2:
+        params["objective"] = "multi:softprob"
+        params["num_class"] = len(data.class_names)
+    else:
+        params["objective"] = "binary:logistic"
+
+    model = XGBClassifier(**params)
+    model.fit(x_train, y_train, verbose=False)
+    pred = model.predict(data.x_test)
+    probs = model.predict_proba(data.x_test)
+
+    model_path = run_dir / "models" / f"{model_id}.joblib"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(
+        {
+            "model": model,
+            "input_dim": int(data.x_train.shape[1]),
+            "output_dim": int(len(data.class_names)),
+            "train_seed": train_seed,
+            "data_seed": data_seed,
+            "origin_seed": origin_seed,
+            "comparison_block": comparison_block,
+            "model_family": "xgboost",
+            "subset_strategy": subset_strategy,
+            "subset_fraction": subset_fraction,
+            "architecture_id": "xgboost",
+            "hidden_dims_label": "none",
+            "activation": "none",
+            "class_names": data.class_names,
+        },
+        model_path,
+    )
+
+    return {
+        "model_id": model_id,
+        "seed": train_seed,
+        "train_seed": train_seed,
+        "data_seed": data_seed,
+        "origin_seed": origin_seed,
+        "comparison_block": comparison_block,
+        "model_family": "xgboost",
+        "subset_strategy": subset_strategy,
+        "subset_fraction": subset_fraction,
+        "architecture_id": "xgboost",
+        "hidden_dims_label": "none",
+        "activation": "none",
+        "subset_size": int(len(subset_idx)),
+        "model_path": str(model_path),
+        "accuracy": accuracy_score(data.y_test, pred),
+        "macro_f1": f1_score(data.y_test, pred, average="macro"),
+        "log_loss": log_loss(data.y_test, probs, labels=list(range(len(data.class_names)))),
+        "pred": pred,
+        "probs": probs,
+    }
+
+
 def run_training(
     config: dict,
     seeds: list[int] | None = None,
     subset_fractions: list[float] | None = None,
     hidden_dims_variants: list[list[int]] | None = None,
     activation_variants: list[str] | None = None,
+    origin_seed: int | None = None,
 ) -> None:
+    origin_seed = _resolved_origin_seed(config, origin_seed)
+    config = {**config, "experiment_name": _resolve_experiment_name(config, origin_seed)}
+    config["run_dir"] = str(_resolve_run_dir(config, origin_seed))
+    config["training"] = dict(config["training"])
+    config["training"]["origin_seed"] = origin_seed
+
     run_dir = Path(config["run_dir"])
     run_dir.mkdir(parents=True, exist_ok=True)
     save_json(config, run_dir / "config.resolved.json")
 
     data = prepare_dataset(config, run_dir)
-    seeds = seeds or config["training"]["seeds"]
-    subset_fractions = subset_fractions or config["training"]["subset_fractions"]
-    hidden_dims_variants = hidden_dims_variants or config["training"].get(
-        "hidden_dims_variants",
-        [config["training"]["hidden_dims"]],
-    )
-    activation_variants = activation_variants or _activation_variants(config)
 
     all_metrics = []
     prediction_frames = []
-    for seed in tqdm(seeds, desc="seeds"):
-        for fraction in subset_fractions:
-            for hidden_dims in hidden_dims_variants:
-                for activation in activation_variants:
-                    hidden_dims = list(hidden_dims)
-                    architecture_id = f"arch_{_hidden_dims_label(hidden_dims)}"
-                    # The model_id encodes all experimental factors used later by
-                    # disagreement, SHAP and plotting steps.
-                    model_id = (
-                        f"seed{seed}_frac{str(fraction).replace('.', 'p')}"
-                        f"_{architecture_id}_act_{activation}"
-                    )
-                    result = train_one_model(
-                        data,
-                        config,
-                        seed,
-                        fraction,
-                        hidden_dims,
-                        activation,
-                        architecture_id,
-                        model_id,
-                        run_dir,
-                    )
-                    probs = result.pop("probs")
-                    pred = result.pop("pred")
-                    all_metrics.append(result)
+    if config["training"].get("design") == "factorized":
+        specs = _factorized_specs(config, origin_seed)
+    else:
+        seeds = seeds or config["training"]["seeds"]
+        subset_fractions = subset_fractions or config["training"]["subset_fractions"]
+        hidden_dims_variants = hidden_dims_variants or config["training"].get(
+            "hidden_dims_variants",
+            [config["training"]["hidden_dims"]],
+        )
+        activation_variants = activation_variants or _activation_variants(config)
+        specs = []
+        for seed in seeds:
+            for fraction in subset_fractions:
+                for hidden_dims in hidden_dims_variants:
+                    for activation in activation_variants:
+                        specs.append(
+                            _mlp_spec(
+                                origin_seed=origin_seed,
+                                comparison_block="grid",
+                                train_seed=seed,
+                                data_seed=seed,
+                                subset_strategy="stratified",
+                                subset_fraction=fraction,
+                                hidden_dims=list(hidden_dims),
+                                activation=activation,
+                            )
+                        )
 
-                    frame = pd.DataFrame(
-                        {
-                            "sample_id": np.arange(len(data.y_test)),
-                            "y_true": data.y_test,
-                            "model_id": model_id,
-                            "seed": seed,
-                            "subset_fraction": fraction,
-                            "architecture_id": architecture_id,
-                            "hidden_dims_label": _hidden_dims_label(hidden_dims),
-                            "activation": activation,
-                            "y_pred": pred,
-                        }
-                    )
-                    for class_idx, class_name in enumerate(data.class_names):
-                        frame[f"prob_{class_name}"] = probs[:, class_idx]
-                    prediction_frames.append(frame)
+    pd.DataFrame(specs).to_csv(run_dir / "training_plan.csv", index=False)
+    for spec in tqdm(specs, desc="models"):
+        if spec["model_family"] == "xgboost":
+            result = train_one_xgboost(
+                data,
+                config,
+                model_id=spec["model_id"],
+                origin_seed=spec["origin_seed"],
+                train_seed=spec["train_seed"],
+                data_seed=spec["data_seed"],
+                subset_fraction=spec["subset_fraction"],
+                subset_strategy=spec["subset_strategy"],
+                comparison_block=spec["comparison_block"],
+                run_dir=run_dir,
+            )
+        else:
+            result = train_one_model(
+                data,
+                config,
+                spec["train_seed"],
+                spec["data_seed"],
+                spec["subset_fraction"],
+                spec["subset_strategy"],
+                spec["hidden_dims"],
+                spec["activation"],
+                spec["architecture_id"],
+                spec["model_id"],
+                spec["origin_seed"],
+                spec["comparison_block"],
+                run_dir,
+            )
+        probs = result.pop("probs")
+        pred = result.pop("pred")
+        all_metrics.append(result)
+
+        frame = pd.DataFrame(
+            {
+                "sample_id": np.arange(len(data.y_test)),
+                "y_true": data.y_test,
+                "model_id": spec["model_id"],
+                "seed": spec["train_seed"],
+                "train_seed": spec["train_seed"],
+                "data_seed": spec["data_seed"],
+                "origin_seed": spec["origin_seed"],
+                "comparison_block": spec["comparison_block"],
+                "model_family": spec["model_family"],
+                "subset_strategy": spec["subset_strategy"],
+                "subset_fraction": spec["subset_fraction"],
+                "architecture_id": spec["architecture_id"],
+                "hidden_dims_label": spec["hidden_dims_label"],
+                "activation": spec["activation"],
+                "y_pred": pred,
+            }
+        )
+        for class_idx, class_name in enumerate(data.class_names):
+            frame[f"prob_{class_name}"] = probs[:, class_idx]
+        prediction_frames.append(frame)
 
     pd.DataFrame(all_metrics).to_csv(run_dir / "metrics.csv", index=False)
     pd.concat(prediction_frames, ignore_index=True).to_csv(run_dir / "test_predictions.csv", index=False)

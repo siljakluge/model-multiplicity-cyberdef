@@ -38,6 +38,7 @@ def main() -> None:
     train_parser.add_argument("--subset-fractions", nargs="*", type=float)
     train_parser.add_argument("--hidden-dims-variants", nargs="*")
     train_parser.add_argument("--activation-variants", nargs="*")
+    train_parser.add_argument("--origin-seed", type=int)
 
     disagree_parser = subparsers.add_parser("disagree")
     disagree_parser.add_argument("--run-dir", required=True)
@@ -69,6 +70,7 @@ def main() -> None:
             subset_fractions=args.subset_fractions,
             hidden_dims_variants=_parse_hidden_dims_variants(args.hidden_dims_variants),
             activation_variants=_parse_activation_variants(args.activation_variants),
+            origin_seed=args.origin_seed,
         )
     elif args.command == "disagree":
         compute_disagreement(
