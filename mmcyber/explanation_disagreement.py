@@ -22,7 +22,12 @@ def _spearman(x: pd.Series, y: pd.Series) -> float:
 
 def compute_explanation_disagreement(run_dir: str | Path, top_k: int = 20) -> None:
     run_path = Path(run_dir)
-    summary = pd.read_csv(run_path / "shap_summary.csv")
+    summary_path = run_path / "shap_summary.csv"
+    if not summary_path.exists():
+        raise FileNotFoundError(
+            f"Missing required run artifact {summary_path}. Run `mmcyber shap --run-dir {run_path}` first."
+        )
+    summary = pd.read_csv(summary_path)
     rows = []
 
     for class_name, class_frame in summary.groupby("class_name"):

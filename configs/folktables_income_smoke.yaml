@@ -1,0 +1,49 @@
+experiment_name: folktables_income_smoke_seed{origin_seed}
+run_dir: runs/folktables_income_smoke_seed{origin_seed}
+
+dataset:
+  name: folktables
+  problem: ACSIncome
+  raw_dir: data/raw/folktables
+  survey_year: "2018"
+  horizon: 1-Year
+  survey: person
+  states: [CA]
+  density: 0.02
+  download: true
+  test_size: 0.2
+  validation_size: 0.2
+
+training:
+  design: factorized
+  origin_seed: 1
+  seeds: [1, 2, 3]
+  comparison_seeds: [2, 3]
+  subset_fractions: [1.0]
+  subset_strategy: stratified
+  factorized_subset_fraction: 1.0
+  hidden_dims_variants:
+    - [32, 16]
+  architecture_variants:
+    - [32, 16]
+  activation_variants: [relu]
+  epochs: 3
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  hidden_dims: [32, 16]
+  activation: relu
+  dropout: 0.2
+  patience: 2
+  device: auto
+  xgboost:
+    enabled: true
+    seeds: [2]
+    n_estimators: 20
+    max_depth: 4
+    learning_rate: 0.1
+    subsample: 1.0
+    colsample_bytree: 1.0
+    reg_lambda: 1.0
+    n_jobs: 1
+    tree_method: hist
