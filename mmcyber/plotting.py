@@ -8,6 +8,24 @@ import numpy as np
 import pandas as pd
 
 
+def _require_csv(run_path: Path, filename: str) -> pd.DataFrame:
+    path = run_path / filename
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing required plot input '{filename}' in '{run_path}'. "
+            "Generate it first with the corresponding pipeline step "
+            "(train, disagree, shap, or explain-disagree)."
+        )
+    return pd.read_csv(path)
+
+
+def _optional_csv(run_path: Path, filename: str) -> pd.DataFrame | None:
+    path = run_path / filename
+    if not path.exists():
+        return None
+    return pd.read_csv(path)
+
+
 def _setup_matplotlib():
     import matplotlib
 
@@ -104,7 +122,7 @@ def plot_metrics(run_dir: str | Path, out_dir: str | Path | None = None) -> None
     plt, sns = _setup_matplotlib()
     run_path = Path(run_dir)
     out_path = Path(out_dir) if out_dir else run_path / "plots"
-    metrics = pd.read_csv(run_path / "metrics.csv")
+    metrics = _require_csv(run_path, "metrics.csv")
 
     long = metrics.melt(
         id_vars=["model_id", "seed", "subset_fraction", "architecture_id", "hidden_dims_label", "activation"],
@@ -168,9 +186,11 @@ def plot_decision_disagreement(run_dir: str | Path, out_dir: str | Path | None =
     plt, sns = _setup_matplotlib()
     run_path = Path(run_dir)
     out_path = Path(out_dir) if out_dir else run_path / "plots"
-    predictions = pd.read_csv(run_path / "test_predictions.csv")
-    pairwise = pd.read_csv(run_path / "disagreement_summary.csv")
-    sample = pd.read_csv(run_path / "sample_disagreement.csv")
+    predictions = _require_csv(run_path, "test_predictions.csv")
+    pairwise = _optional_csv(run_path, "disagreement_summary.csv")
+    sample = _optional_csv(run_path, "sample_disagreement.csv")
+    if pairwise is None or sample is None:
+        return
 
     # Reconstruct the symmetric pairwise matrix from the long-form pair table.
     pivot = predictions.pivot(index="sample_id", columns="model_id", values="y_pred")
@@ -211,9 +231,8 @@ def plot_decision_disagreement(run_dir: str | Path, out_dir: str | Path | None =
         _save(fig, out_path / "conflict_ratio.png")
         plt.close(fig)
 
-    summary_path = run_path / "multiplicity_summary.csv"
-    if summary_path.exists():
-        summary = pd.read_csv(summary_path)
+    summary = _optional_csv(run_path, "multiplicity_summary.csv")
+    if summary is not None:
         value_vars = [
             "ambiguity",
             "mean_conflict_ratio",
@@ -231,9 +250,8 @@ def plot_decision_disagreement(run_dir: str | Path, out_dir: str | Path | None =
         _save(fig, out_path / "multiplicity_summary.png")
         plt.close(fig)
 
-    factor_path = run_path / "disagreement_by_factor.csv"
-    if factor_path.exists():
-        factor_summary = pd.read_csv(factor_path)
+    factor_summary = _optional_csv(run_path, "disagreement_by_factor.csv")
+    if factor_summary is not None:
         if len(factor_summary):
             fig, ax = plt.subplots(figsize=(7.5, 4.5))
             sns.barplot(data=factor_summary, x="source_factor", y="mean_disagreement_rate", ax=ax)
@@ -248,7 +266,9 @@ def plot_shap(run_dir: str | Path, out_dir: str | Path | None = None, top_n: int
     plt, sns = _setup_matplotlib()
     run_path = Path(run_dir)
     out_path = Path(out_dir) if out_dir else run_path / "plots"
-    shap_summary = pd.read_csv(run_path / "shap_summary.csv")
+    shap_summary = _optional_csv(run_path, "shap_summary.csv")
+    if shap_summary is None:
+        return
 
     for class_name, class_frame in shap_summary.groupby("class_name"):
         top_features = (
@@ -273,7 +293,9 @@ def plot_explanation_disagreement(run_dir: str | Path, out_dir: str | Path | Non
     plt, sns = _setup_matplotlib()
     run_path = Path(run_dir)
     out_path = Path(out_dir) if out_dir else run_path / "plots"
-    explanation = pd.read_csv(run_path / "explanation_disagreement.csv")
+    explanation = _optional_csv(run_path, "explanation_disagreement.csv")
+    if explanation is None:
+        return
 
     metrics = [
         ("mean_abs_shap_cosine_distance", "SHAP Cosine Distance"),
