@@ -228,6 +228,42 @@ def _predict(model: nn.Module, x: np.ndarray, device: torch.device, batch_size: 
     return probs.argmax(axis=1), probs
 
 
+def _prediction_frame(spec: dict, data: PreparedData, pred: np.ndarray, probs: np.ndarray) -> pd.DataFrame:
+    frame = pd.DataFrame(
+        {
+            "sample_id": np.arange(len(data.y_test)),
+            "y_true": data.y_test,
+            "model_id": spec["model_id"],
+            "seed": spec["train_seed"],
+            "train_seed": spec["train_seed"],
+            "data_seed": spec["data_seed"],
+            "origin_seed": spec["origin_seed"],
+            "comparison_block": spec["comparison_block"],
+            "model_family": spec["model_family"],
+            "subset_strategy": spec["subset_strategy"],
+            "subset_fraction": spec["subset_fraction"],
+            "architecture_id": spec["architecture_id"],
+            "hidden_dims_label": spec["hidden_dims_label"],
+            "activation": spec["activation"],
+            "y_pred": pred,
+        }
+    )
+    for class_idx, class_name in enumerate(data.class_names):
+        frame[f"prob_{class_name}"] = probs[:, class_idx]
+    return frame
+
+
+def _write_training_artifacts(
+    run_dir: Path,
+    data: PreparedData,
+    all_metrics: list[dict],
+    prediction_frames: list[pd.DataFrame],
+) -> None:
+    pd.DataFrame(all_metrics).to_csv(run_dir / "metrics.csv", index=False)
+    pd.concat(prediction_frames, ignore_index=True).to_csv(run_dir / "test_predictions.csv", index=False)
+    pd.Series(data.class_names, name="class_name").to_csv(run_dir / "class_names.csv", index=False)
+
+
 def train_one_model(
     data: PreparedData,
     config: dict,
@@ -461,6 +497,7 @@ def run_training(
 
     all_metrics = []
     prediction_frames = []
+    pd.Series(data.class_names, name="class_name").to_csv(run_dir / "class_names.csv", index=False)
     if config["training"].get("design") == "factorized":
         specs = _factorized_specs(config, origin_seed)
     else:
@@ -523,30 +560,5 @@ def run_training(
         probs = result.pop("probs")
         pred = result.pop("pred")
         all_metrics.append(result)
-
-        frame = pd.DataFrame(
-            {
-                "sample_id": np.arange(len(data.y_test)),
-                "y_true": data.y_test,
-                "model_id": spec["model_id"],
-                "seed": spec["train_seed"],
-                "train_seed": spec["train_seed"],
-                "data_seed": spec["data_seed"],
-                "origin_seed": spec["origin_seed"],
-                "comparison_block": spec["comparison_block"],
-                "model_family": spec["model_family"],
-                "subset_strategy": spec["subset_strategy"],
-                "subset_fraction": spec["subset_fraction"],
-                "architecture_id": spec["architecture_id"],
-                "hidden_dims_label": spec["hidden_dims_label"],
-                "activation": spec["activation"],
-                "y_pred": pred,
-            }
-        )
-        for class_idx, class_name in enumerate(data.class_names):
-            frame[f"prob_{class_name}"] = probs[:, class_idx]
-        prediction_frames.append(frame)
-
-    pd.DataFrame(all_metrics).to_csv(run_dir / "metrics.csv", index=False)
-    pd.concat(prediction_frames, ignore_index=True).to_csv(run_dir / "test_predictions.csv", index=False)
-    pd.Series(data.class_names, name="class_name").to_csv(run_dir / "class_names.csv", index=False)
+        prediction_frames.append(_prediction_frame(spec, data, pred, probs))
+        _write_training_artifacts(run_dir, data, all_metrics, prediction_frames)
