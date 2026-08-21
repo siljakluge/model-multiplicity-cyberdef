@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 
 import joblib
 import numpy as np
@@ -14,11 +18,6 @@ from tqdm import tqdm
 from mmcyber.data import PreparedData, prepare_dataset, stratified_subset_indices
 from mmcyber.model import MLPClassifier, resolve_device
 from mmcyber.utils import save_json, set_seed
-
-try:
-    from xgboost import XGBClassifier
-except ImportError:  # pragma: no cover - handled explicitly when used
-    XGBClassifier = None
 
 
 def _hidden_dims_label(hidden_dims: list[int]) -> str:
@@ -264,6 +263,62 @@ def _write_training_artifacts(
     pd.Series(data.class_names, name="class_name").to_csv(run_dir / "class_names.csv", index=False)
 
 
+def _xgboost_dataset_cache_path(run_dir: Path) -> Path:
+    return run_dir / "xgboost_dataset.joblib"
+
+
+def _ensure_xgboost_dataset_cache(run_dir: Path, data: PreparedData) -> Path:
+    cache_path = _xgboost_dataset_cache_path(run_dir)
+    if cache_path.exists():
+        return cache_path
+    joblib.dump(
+        {
+            "x_train": data.x_train,
+            "y_train": data.y_train,
+            "x_test": data.x_test,
+            "y_test": data.y_test,
+            "class_names": data.class_names,
+        },
+        cache_path,
+    )
+    return cache_path
+
+
+def _xgboost_payload(run_dir: Path, spec: dict, data: PreparedData, config: dict) -> dict:
+    training_config = config["training"]
+    xgb_config = training_config.get("xgboost", {})
+    subset_idx = _training_subset(
+        data,
+        float(spec["subset_fraction"]),
+        int(spec["data_seed"]),
+        str(spec["subset_strategy"]),
+    )[2]
+    params = {
+        "n_estimators": int(xgb_config.get("n_estimators", 200)),
+        "max_depth": int(xgb_config.get("max_depth", 6)),
+        "learning_rate": float(xgb_config.get("learning_rate", 0.1)),
+        "subsample": float(xgb_config.get("subsample", 1.0)),
+        "colsample_bytree": float(xgb_config.get("colsample_bytree", 1.0)),
+        "reg_lambda": float(xgb_config.get("reg_lambda", 1.0)),
+        "random_state": int(spec["train_seed"]),
+        "n_jobs": int(xgb_config.get("n_jobs", 1)),
+        "tree_method": xgb_config.get("tree_method", "hist"),
+        "eval_metric": "mlogloss" if len(data.class_names) > 2 else "logloss",
+    }
+    if len(data.class_names) > 2:
+        params["objective"] = "multi:softprob"
+        params["num_class"] = len(data.class_names)
+    else:
+        params["objective"] = "binary:logistic"
+    return {
+        "dataset_path": str(_ensure_xgboost_dataset_cache(run_dir, data)),
+        "subset_idx": subset_idx,
+        "params": params,
+        "spec": spec,
+        "model_path": str(run_dir / "models" / f"{spec['model_id']}.joblib"),
+    }
+
+
 def train_one_model(
     data: PreparedData,
     config: dict,
@@ -400,79 +455,40 @@ def train_one_xgboost(
     comparison_block: str,
     run_dir: Path,
 ) -> dict:
-    if XGBClassifier is None:
-        raise ImportError("xgboost is not installed. Install project dependencies to use the XGBoost comparison block.")
-
-    training_config = config["training"]
-    xgb_config = training_config.get("xgboost", {})
-    x_train, y_train, subset_idx = _training_subset(data, subset_fraction, data_seed, subset_strategy)
-
-    params = {
-        "n_estimators": int(xgb_config.get("n_estimators", 200)),
-        "max_depth": int(xgb_config.get("max_depth", 6)),
-        "learning_rate": float(xgb_config.get("learning_rate", 0.1)),
-        "subsample": float(xgb_config.get("subsample", 1.0)),
-        "colsample_bytree": float(xgb_config.get("colsample_bytree", 1.0)),
-        "reg_lambda": float(xgb_config.get("reg_lambda", 1.0)),
-        "random_state": train_seed,
-        "n_jobs": int(xgb_config.get("n_jobs", 1)),
-        "tree_method": xgb_config.get("tree_method", "hist"),
-        "eval_metric": "mlogloss" if len(data.class_names) > 2 else "logloss",
-    }
-    if len(data.class_names) > 2:
-        params["objective"] = "multi:softprob"
-        params["num_class"] = len(data.class_names)
-    else:
-        params["objective"] = "binary:logistic"
-
-    model = XGBClassifier(**params)
-    model.fit(x_train, y_train, verbose=False)
-    pred = model.predict(data.x_test)
-    probs = model.predict_proba(data.x_test)
-
-    model_path = run_dir / "models" / f"{model_id}.joblib"
-    model_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(
-        {
-            "model": model,
-            "input_dim": int(data.x_train.shape[1]),
-            "output_dim": int(len(data.class_names)),
-            "train_seed": train_seed,
-            "data_seed": data_seed,
-            "origin_seed": origin_seed,
-            "comparison_block": comparison_block,
-            "model_family": "xgboost",
-            "subset_strategy": subset_strategy,
-            "subset_fraction": subset_fraction,
-            "architecture_id": "xgboost",
-            "hidden_dims_label": "none",
-            "activation": "none",
-            "class_names": data.class_names,
-        },
-        model_path,
-    )
-
-    return {
+    spec = {
         "model_id": model_id,
-        "seed": train_seed,
-        "train_seed": train_seed,
-        "data_seed": data_seed,
         "origin_seed": origin_seed,
         "comparison_block": comparison_block,
         "model_family": "xgboost",
+        "train_seed": train_seed,
+        "data_seed": data_seed,
         "subset_strategy": subset_strategy,
         "subset_fraction": subset_fraction,
+        "hidden_dims": [],
+        "activation": "none",
         "architecture_id": "xgboost",
         "hidden_dims_label": "none",
-        "activation": "none",
-        "subset_size": int(len(subset_idx)),
-        "model_path": str(model_path),
-        "accuracy": accuracy_score(data.y_test, pred),
-        "macro_f1": f1_score(data.y_test, pred, average="macro"),
-        "log_loss": log_loss(data.y_test, probs, labels=list(range(len(data.class_names)))),
-        "pred": pred,
-        "probs": probs,
     }
+    payload = _xgboost_payload(run_dir, spec, data, config)
+    env = os.environ.copy()
+    env.setdefault("OMP_NUM_THREADS", "1")
+    env.setdefault("MKL_NUM_THREADS", "1")
+    with tempfile.TemporaryDirectory(prefix="mmcyber-xgb-") as tmp_dir:
+        payload_path = Path(tmp_dir) / "payload.joblib"
+        result_path = Path(tmp_dir) / "result.joblib"
+        joblib.dump(payload, payload_path)
+        completed = subprocess.run(
+            [sys.executable, "-m", "mmcyber.xgboost_worker", "--payload", str(payload_path), "--result", str(result_path)],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        if completed.returncode != 0:
+            stderr = completed.stderr.strip()
+            stdout = completed.stdout.strip()
+            details = stderr or stdout or f"worker exited with code {completed.returncode}"
+            raise RuntimeError(f"XGBoost worker failed for {model_id}: {details}")
+        return joblib.load(result_path)
 
 
 def run_training(
