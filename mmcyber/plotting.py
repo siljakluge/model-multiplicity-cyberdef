@@ -74,6 +74,7 @@ def export_paper_figures(run_dir: str | Path, out_dir: str | Path | None = None,
         "macro_f1_by_activation.pdf": "results_macro_f1_by_activation.pdf",
         "decision_disagreement_heatmap.pdf": "results_decision_disagreement_heatmap.pdf",
         "disagreement_by_factor.pdf": "results_disagreement_by_factor.pdf",
+        "rashomon_by_source.pdf": "results_rashomon_by_source.pdf",
         "conflict_ratio.pdf": "results_conflict_ratio.pdf",
         "explanation_mean_abs_shap_cosine_distance.pdf": "results_explanation_cosine_distance.pdf",
         "explanation_top_k_jaccard.pdf": "results_explanation_topk_jaccard.pdf",
@@ -260,6 +261,32 @@ def plot_decision_disagreement(run_dir: str | Path, out_dir: str | Path | None =
             ax.set_ylabel("mean pairwise disagreement")
             _save(fig, out_path / "disagreement_by_factor.png")
             plt.close(fig)
+
+    rashomon_by_source = _optional_csv(run_path, "rashomon_by_source.csv")
+    if rashomon_by_source is not None and len(rashomon_by_source):
+        fig, ax = plt.subplots(figsize=(7.5, 4.5))
+        plot_frame = rashomon_by_source.sort_values(
+            ["n_models_rashomon", "n_models_total", "multiplicity_source"],
+            ascending=[False, False, True],
+        )
+        sns.barplot(data=plot_frame, x="multiplicity_source", y="n_models_rashomon", color="#4C78A8", ax=ax)
+        ax.set_title("Rashomon Models by Multiplicity Source")
+        ax.set_xlabel("source of variation")
+        ax.set_ylabel("models in Rashomon set")
+        ax.tick_params(axis="x", rotation=25)
+        ymax = max(int(plot_frame["n_models_total"].max()), int(plot_frame["n_models_rashomon"].max()))
+        ax.set_ylim(0, ymax + 1)
+        for patch, row in zip(ax.patches, plot_frame.itertuples(index=False), strict=False):
+            ax.text(
+                patch.get_x() + patch.get_width() / 2.0,
+                patch.get_height() + 0.03,
+                f"{int(row.n_models_rashomon)}/{int(row.n_models_total)}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
+        _save(fig, out_path / "rashomon_by_source.png")
+        plt.close(fig)
 
 
 def plot_shap(run_dir: str | Path, out_dir: str | Path | None = None, top_n: int = 20) -> None:

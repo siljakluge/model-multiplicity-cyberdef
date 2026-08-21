@@ -50,6 +50,30 @@ def _select_rashomon_models(metrics: pd.DataFrame, tolerance: float, metric: str
     return selected, best
 
 
+def _rashomon_source_summary(metrics: pd.DataFrame, rashomon_models: set[str]) -> pd.DataFrame:
+    source_column = "comparison_block" if "comparison_block" in metrics.columns else "model_family"
+    source_labels = metrics[source_column].fillna("unknown").astype(str)
+    summary = (
+        metrics.assign(
+            multiplicity_source=source_labels,
+            in_rashomon=metrics["model_id"].isin(rashomon_models),
+        )
+        .groupby("multiplicity_source", as_index=False)
+        .agg(
+            n_models_total=("model_id", "nunique"),
+            n_models_rashomon=("in_rashomon", "sum"),
+        )
+        .sort_values(["n_models_rashomon", "n_models_total", "multiplicity_source"], ascending=[False, False, True])
+    )
+    summary["n_models_rashomon"] = summary["n_models_rashomon"].astype(int)
+    summary["rashomon_fraction"] = np.where(
+        summary["n_models_total"] > 0,
+        summary["n_models_rashomon"] / summary["n_models_total"],
+        0.0,
+    )
+    return summary
+
+
 def compute_disagreement(
     run_dir: str | Path,
     rashomon_tolerance: float = 0.015,
@@ -185,3 +209,9 @@ def compute_disagreement(
         "max_pairwise_disagreement": float(disagreement_values.max()) if len(disagreement_values) else 0.0,
     }
     pd.DataFrame([summary]).to_csv(run_path / "multiplicity_summary.csv", index=False)
+
+    rashomon_by_source = _rashomon_source_summary(metrics, rashomon_models)
+    rashomon_by_source.insert(0, "rashomon_metric", rashomon_metric)
+    rashomon_by_source.insert(1, "rashomon_tolerance", rashomon_tolerance)
+    rashomon_by_source.insert(2, "best_score", best_score)
+    rashomon_by_source.to_csv(run_path / "rashomon_by_source.csv", index=False)

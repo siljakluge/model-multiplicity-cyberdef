@@ -135,6 +135,7 @@ The NSL-KDD files are downloaded automatically into `data/raw/nsl-kdd/` on the f
 - `test_predictions.csv`: per-model predictions and probabilities
 - `metrics.csv`: model-level metrics
 - `disagreement_by_factor.csv`: pairwise disagreement aggregated by factor blocks such as `seed`, `bootstrap`, `architecture_activation`, `xgboost`, or `combined`
+- `rashomon_by_source.csv`: counts and fractions of Rashomon-set models per multiplicity source
 - `multiplicity_summary.csv`: Rashomon-set size, ambiguity, mean/max conflict ratio, mean/max pairwise disagreement
 - `disagreement_summary.csv`: pairwise disagreement between models in the Rashomon set
 - `sample_disagreement.csv`: per-sample entropy, majority vote, conflict ratio, and conflict indicator
@@ -157,6 +158,7 @@ The NSL-KDD files are downloaded automatically into `data/raw/nsl-kdd/` on the f
 - `macro_f1_by_activation`: average macro-F1 trend across activation variants
 - `decision_disagreement_heatmap`: pairwise prediction disagreement
 - `disagreement_by_factor`: direct comparison of how much `seed`, `bootstrap resampling`, joint `network size + activation`, and `xgboost` contribute to disagreement
+- `rashomon_by_source`: how many models per multiplicity source actually ended up in the Rashomon set
 - `multiplicity_summary`: ambiguity/conflict/disagreement overview
 - `conflict_ratio`: pointwise predictive multiplicity distribution
 - `sample_vote_entropy`: per-sample ensemble uncertainty
