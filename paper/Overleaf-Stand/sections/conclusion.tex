@@ -1,4 +1,9 @@
 \section{Conclusion}
 
+This paper investigates model multiplicity in neural intrusion detection by comparing the predictions and \gls{SHAP}-based explanations of similarly performing classifiers. The \gls{NSLKDD} experiment yields a Rashomon set in which aggregate metrics are close, while individual predictions and feature attributions are not fully stable. Predictive disagreement is concentrated in a subset of samples, and explanation variability affects both attribution magnitudes and feature rankings. Thus, selecting a model by accuracy or macro-\gls{F1} alone does not establish that its decisions or explanations are uniquely justified.
+
+These findings motivate a multiplicity-aware evaluation protocol for cyber-defense classifiers: select the Rashomon set on validation data, reserve the test set for reporting, measure both pairwise and pointwise predictive disagreement, and report explanation consensus and variability rather than a single explanation in isolation. Such reporting gives analysts a concrete signal of where the model family supports a stable conclusion and where the decision depends on model choice.
+
+The next step is to apply the validation-based reconstruction pipeline to all stored training origins and to report origin-level uncertainty intervals across the full experiment suite. Extending the study to contemporary intrusion datasets, additional model families, multiclass detection, and realistic distribution shifts will establish how general the observed effects are. Evaluating how multiplicity-aware alerts affect analyst workload and defensive outcomes is particularly important before translating these measures into deployed cyber-defense workflows.
 
 
