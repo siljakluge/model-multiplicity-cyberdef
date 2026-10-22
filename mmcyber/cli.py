@@ -4,6 +4,8 @@ import argparse
 
 from mmcyber.disagreement import compute_disagreement
 from mmcyber.explanation_disagreement import compute_explanation_disagreement
+from mmcyber.aggregate import aggregate_runs
+from mmcyber.reevaluate import reconstruct_validation_metrics
 from mmcyber.plotting import plot_all
 from mmcyber.shap_analysis import compute_shap
 from mmcyber.train import run_training
@@ -43,7 +45,7 @@ def main() -> None:
     disagree_parser = subparsers.add_parser("disagree")
     disagree_parser.add_argument("--run-dir", required=True)
     disagree_parser.add_argument("--rashomon-tolerance", type=float, default=0.015)
-    disagree_parser.add_argument("--rashomon-metric", default="accuracy")
+    disagree_parser.add_argument("--rashomon-metric", default="val_accuracy")
 
     shap_parser = subparsers.add_parser("shap")
     shap_parser.add_argument("--run-dir", required=True)
@@ -60,6 +62,17 @@ def main() -> None:
     plot_parser.add_argument("--out-dir")
     plot_parser.add_argument("--top-n", type=int, default=20)
     plot_parser.add_argument("--paper-dir")
+
+    aggregate_parser = subparsers.add_parser("aggregate")
+    aggregate_parser.add_argument("--run-dirs", nargs="+", required=True)
+    aggregate_parser.add_argument("--out-dir", required=True)
+    aggregate_parser.add_argument("--n-bootstrap", type=int, default=10_000)
+    aggregate_parser.add_argument("--seed", type=int, default=42)
+
+    reevaluate_parser = subparsers.add_parser("reevaluate")
+    reevaluate_parser.add_argument("--run-dir", required=True)
+    reevaluate_parser.add_argument("--batch-size", type=int, default=1024)
+    reevaluate_parser.add_argument("--device", default="auto")
 
     args = parser.parse_args()
     if args.command == "train":
@@ -89,6 +102,10 @@ def main() -> None:
         compute_explanation_disagreement(args.run_dir, top_k=args.top_k)
     elif args.command == "plot":
         plot_all(args.run_dir, out_dir=args.out_dir, top_n=args.top_n, paper_dir=args.paper_dir)
+    elif args.command == "aggregate":
+        aggregate_runs(args.run_dirs, args.out_dir, n_bootstrap=args.n_bootstrap, seed=args.seed)
+    elif args.command == "reevaluate":
+        reconstruct_validation_metrics(args.run_dir, batch_size=args.batch_size, device_name=args.device)
 
 
 if __name__ == "__main__":

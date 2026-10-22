@@ -21,12 +21,16 @@ def run_worker(payload_path: str | Path, result_path: str | Path) -> None:
 
     x_train = dataset["x_train"][subset_idx]
     y_train = dataset["y_train"][subset_idx]
+    x_val = dataset["x_val"]
+    y_val = dataset["y_val"]
     x_test = dataset["x_test"]
     y_test = dataset["y_test"]
     class_names = dataset["class_names"]
 
     model = XGBClassifier(**payload["params"])
     model.fit(x_train, y_train, verbose=False)
+    val_pred = model.predict(x_val)
+    val_probs = model.predict_proba(x_val)
     pred = model.predict(x_test)
     probs = model.predict_proba(x_test)
 
@@ -67,6 +71,9 @@ def run_worker(payload_path: str | Path, result_path: str | Path) -> None:
         "activation": "none",
         "subset_size": int(len(subset_idx)),
         "model_path": str(model_path),
+        "val_accuracy": accuracy_score(y_val, val_pred),
+        "val_macro_f1": f1_score(y_val, val_pred, average="macro"),
+        "val_log_loss": log_loss(y_val, val_probs, labels=list(range(len(class_names)))),
         "accuracy": accuracy_score(y_test, pred),
         "macro_f1": f1_score(y_test, pred, average="macro"),
         "log_loss": log_loss(y_test, probs, labels=list(range(len(class_names)))),

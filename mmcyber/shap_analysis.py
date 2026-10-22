@@ -18,6 +18,26 @@ def _iter_model_artifacts(models_dir: Path) -> list[Path]:
     return sorted(path for path in models_dir.glob("*") if path.suffix in {".pt", ".joblib"})
 
 
+def _rashomon_model_paths(run_path: Path, model_paths: list[Path]) -> list[Path]:
+    membership_path = _require_run_file(
+        run_path,
+        "rashomon_models.csv",
+        "Run `mmcyber disagree` first; SHAP is defined only for its validation-selected Rashomon set.",
+    )
+    membership = pd.read_csv(membership_path)
+    if "model_id" not in membership.columns:
+        raise ValueError(f"{membership_path} has no model_id column.")
+    selected = set(membership["model_id"].astype(str))
+    paths = [path for path in model_paths if path.stem in selected]
+    missing = selected - {path.stem for path in paths}
+    if missing:
+        preview = ", ".join(sorted(missing)[:5])
+        raise FileNotFoundError(f"Missing model artifacts for {len(missing)} Rashomon models (e.g. {preview}).")
+    if not paths:
+        raise ValueError("Validation-selected Rashomon set is empty.")
+    return paths
+
+
 def _select_explain_indices(run_path: Path, n_test: int, max_explain: int, seed: int, only_conflicts: bool) -> np.ndarray:
     rng = np.random.default_rng(seed)
     if only_conflicts and (run_path / "sample_disagreement.csv").exists():
@@ -117,6 +137,7 @@ def compute_shap(
     if not model_paths:
         raise FileNotFoundError(f"No model artifacts found under {models_dir}. Run train first.")
 
+    model_paths = _rashomon_model_paths(run_path, model_paths)
     rng = np.random.default_rng(42)
     background_idx = rng.choice(len(data.x_train), size=min(max_background, len(data.x_train)), replace=False)
     explain_idx = _select_explain_indices(run_path, len(data.x_test), max_explain, seed=42, only_conflicts=only_conflicts)

@@ -1,0 +1,4 @@
+dataset,n_origins,rashomon_models_mean,rashomon_models_ci_low,rashomon_models_ci_high,ambiguity_mean,ambiguity_ci_low,ambiguity_ci_high,decision_disagreement_mean,decision_disagreement_ci_low,decision_disagreement_ci_high,shap_cosine_distance_mean,shap_cosine_distance_ci_low,shap_cosine_distance_ci_high,top10_jaccard_mean,top10_jaccard_ci_low,top10_jaccard_ci_high,sign_instability_mean,sign_instability_ci_low,sign_instability_ci_high
+Adult,10,58.3,57.5,59.1,0.153465,0.151336,0.155543,0.034208,0.033942,0.034508,0.071954,0.067554,0.076230,0.685789,0.673050,0.698499,0.094714,0.092873,0.096461
+Bank Marketing,10,59.1,58.7,59.6,0.143127,0.141424,0.144764,0.034943,0.034702,0.035195,0.026704,0.025940,0.027436,0.598393,0.591639,0.605453,0.164525,0.162714,0.166644
+NSL-KDD,10,10.4,8.7,12.3,0.072365,0.066971,0.078092,0.026012,0.025151,0.027024,0.046249,0.044689,0.047922,0.709236,0.699950,0.717862,0.074548,0.072569,0.076779

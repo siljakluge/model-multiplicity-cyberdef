@@ -77,7 +77,7 @@ def _rashomon_source_summary(metrics: pd.DataFrame, rashomon_models: set[str]) -
 def compute_disagreement(
     run_dir: str | Path,
     rashomon_tolerance: float = 0.015,
-    rashomon_metric: str = "accuracy",
+    rashomon_metric: str = "val_accuracy",
 ) -> None:
     run_path = Path(run_dir)
     predictions = pd.read_csv(
@@ -95,6 +95,14 @@ def compute_disagreement(
     )
     metrics = pd.read_csv(run_path / "metrics.csv")
     rashomon_models, best_score = _select_rashomon_models(metrics, rashomon_tolerance, rashomon_metric)
+    # Persist membership, rather than recomputing it independently in each
+    # analysis stage. This makes the validation-selected set auditable and
+    # ensures SHAP and explanation comparisons use exactly the same models.
+    selected_metrics = metrics.loc[metrics["model_id"].isin(rashomon_models)].copy()
+    selected_metrics.insert(1, "rashomon_metric", rashomon_metric)
+    selected_metrics.insert(2, "rashomon_tolerance", rashomon_tolerance)
+    selected_metrics.insert(3, "rashomon_best_score", best_score)
+    selected_metrics.to_csv(run_path / "rashomon_models.csv", index=False)
     predictions = predictions[predictions["model_id"].isin(rashomon_models)].copy()
     metric_lookup = metrics.set_index("model_id")
     # Pivot to one row per test sample and one column per selected model; this

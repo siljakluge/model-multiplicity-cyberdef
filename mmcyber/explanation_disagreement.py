@@ -28,6 +28,15 @@ def compute_explanation_disagreement(run_dir: str | Path, top_k: int = 20) -> No
             f"Missing required run artifact {summary_path}. Run `mmcyber shap --run-dir {run_path}` first."
         )
     summary = pd.read_csv(summary_path)
+    membership_path = run_path / "rashomon_models.csv"
+    if not membership_path.exists():
+        raise FileNotFoundError(
+            f"Missing required run artifact {membership_path}. Run `mmcyber disagree` first."
+        )
+    selected_models = set(pd.read_csv(membership_path)["model_id"].astype(str))
+    summary = summary[summary["model_id"].astype(str).isin(selected_models)].copy()
+    if summary.empty:
+        raise ValueError("shap_summary.csv contains no validation-selected Rashomon models. Re-run `mmcyber shap`.")
     rows = []
 
     for class_name, class_frame in summary.groupby("class_name"):
@@ -68,6 +77,11 @@ def compute_explanation_disagreement(run_dir: str | Path, top_k: int = 20) -> No
 def compute_shap_variability(run_dir: str | Path) -> None:
     run_path = Path(run_dir)
     shap_values = pd.read_csv(run_path / "shap_values_long.csv.gz")
+    membership_path = run_path / "rashomon_models.csv"
+    if not membership_path.exists():
+        raise FileNotFoundError(f"Missing required run artifact {membership_path}. Run `mmcyber disagree` first.")
+    selected_models = set(pd.read_csv(membership_path)["model_id"].astype(str))
+    shap_values = shap_values[shap_values["model_id"].astype(str).isin(selected_models)].copy()
     sample_disagreement = pd.read_csv(run_path / "sample_disagreement.csv")
     sample_cols = ["sample_id", "conflict_ratio", "is_conflict", "vote_entropy", "majority_fraction"]
     available_cols = [column for column in sample_cols if column in sample_disagreement.columns]

@@ -270,11 +270,15 @@ def _xgboost_dataset_cache_path(run_dir: Path) -> Path:
 def _ensure_xgboost_dataset_cache(run_dir: Path, data: PreparedData) -> Path:
     cache_path = _xgboost_dataset_cache_path(run_dir)
     if cache_path.exists():
-        return cache_path
+        cached = joblib.load(cache_path)
+        if {"x_val", "y_val"}.issubset(cached):
+            return cache_path
     joblib.dump(
         {
             "x_train": data.x_train,
+            "x_val": data.x_val,
             "y_train": data.y_train,
+            "y_val": data.y_val,
             "x_test": data.x_test,
             "y_test": data.y_test,
             "class_names": data.class_names,
@@ -393,6 +397,7 @@ def train_one_model(
     if best_state is not None:
         model.load_state_dict(best_state)
 
+    val_pred, val_probs = _predict(model, data.x_val, device, training_config["batch_size"])
     pred, probs = _predict(model, data.x_test, device, training_config["batch_size"])
     model_path = run_dir / "models" / f"{model_id}.pt"
     model_path.parent.mkdir(parents=True, exist_ok=True)
@@ -434,6 +439,11 @@ def train_one_model(
         "activation": activation,
         "subset_size": int(len(subset_idx)),
         "model_path": str(model_path),
+        # Rashomon membership is selected from validation metrics. Test metrics
+        # remain untouched until the selected set is evaluated downstream.
+        "val_accuracy": accuracy_score(data.y_val, val_pred),
+        "val_macro_f1": f1_score(data.y_val, val_pred, average="macro"),
+        "val_log_loss": log_loss(data.y_val, val_probs, labels=list(range(output_dim))),
         "accuracy": accuracy_score(data.y_test, pred),
         "macro_f1": f1_score(data.y_test, pred, average="macro"),
         "log_loss": log_loss(data.y_test, probs, labels=list(range(output_dim))),
