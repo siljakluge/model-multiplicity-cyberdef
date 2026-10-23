@@ -161,7 +161,7 @@ def _prepare_nsl_kdd(dataset_config: dict, run_dir: Path) -> PreparedData:
         x_full_df,
         y_full,
         test_size=dataset_config.get("test_size", 0.2),
-        random_state=42,
+        random_state=int(dataset_config.get("split_seed", 42)),
         stratify=y_full,
     )
 
@@ -266,7 +266,7 @@ def _prepare_folktables(dataset_config: dict, run_dir: Path) -> PreparedData:
             x_full_df,
             y_full,
             test_size=dataset_config.get("test_size", 0.2),
-            random_state=42,
+            random_state=int(dataset_config.get("split_seed", 42)),
             stratify=y_full,
         )
         x_full_df = x_trainval_df.reset_index(drop=True)
@@ -276,7 +276,7 @@ def _prepare_folktables(dataset_config: dict, run_dir: Path) -> PreparedData:
         x_full_df,
         y_full,
         test_size=dataset_config.get("validation_size", dataset_config.get("test_size", 0.2)),
-        random_state=42,
+        random_state=int(dataset_config.get("split_seed", 42)),
         stratify=y_full,
     )
 

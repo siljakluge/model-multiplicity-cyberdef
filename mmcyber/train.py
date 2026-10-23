@@ -35,6 +35,30 @@ def _comparison_seeds(config: dict, origin_seed: int) -> list[int]:
     return [int(seed) for seed in config["training"].get("seeds", []) if int(seed) != origin_seed]
 
 
+def _origin_stream_seed(config: dict, origin_seed: int, stream: int, local_seed: int = 0) -> int:
+    """Return a reproducible, origin-disjoint seed for one stochastic stream.
+
+    The legacy factorized design reused the same comparison seeds in every
+    origin.  This maps each origin into its own namespace while retaining the
+    local seed as an auditable part of the training plan.  Stream offsets keep
+    model initialization, bootstrap resampling, and dataset splitting separate.
+    """
+    training_config = config["training"]
+    if training_config.get("seed_schedule", "legacy") != "origin_disjoint":
+        return int(local_seed)
+
+    namespace = int(training_config.get("seed_namespace", 100_000))
+    if namespace <= 90_000:
+        raise ValueError("training.seed_namespace must exceed 90_000 for origin_disjoint scheduling")
+    if not 0 <= int(local_seed) < 10_000:
+        raise ValueError(f"local seed {local_seed} is outside the supported origin-disjoint range")
+
+    seed = int(origin_seed) * namespace + int(stream) * 10_000 + int(local_seed)
+    if seed >= 2**32:
+        raise ValueError("Derived seed exceeds sklearn's supported random_state range")
+    return seed
+
+
 def _bootstrap_indices(y: np.ndarray, fraction: float, seed: int) -> np.ndarray:
     n_samples = max(1, int(round(len(y) * fraction)))
     rng = np.random.default_rng(seed)
@@ -125,13 +149,13 @@ def _mlp_spec(
     return spec
 
 
-def _xgboost_spec(origin_seed: int, train_seed: int, subset_fraction: float) -> dict:
+def _xgboost_spec(origin_seed: int, train_seed: int, data_seed: int, subset_fraction: float) -> dict:
     spec = {
         "origin_seed": origin_seed,
         "comparison_block": "xgboost",
         "model_family": "xgboost",
         "train_seed": train_seed,
-        "data_seed": origin_seed,
+        "data_seed": data_seed,
         "subset_strategy": "stratified",
         "subset_fraction": subset_fraction,
         "hidden_dims": [],
@@ -149,12 +173,14 @@ def _factorized_specs(config: dict, origin_seed: int) -> list[dict]:
     base_hidden_dims = list(training_config["hidden_dims"])
     base_activation = training_config.get("activation", "relu")
     comparison_seeds = _comparison_seeds(config, origin_seed)
+    baseline_train_seed = _origin_stream_seed(config, origin_seed, stream=0, local_seed=0)
+    baseline_data_seed = _origin_stream_seed(config, origin_seed, stream=1, local_seed=0)
     specs = [
         _mlp_spec(
             origin_seed=origin_seed,
             comparison_block="baseline",
-            train_seed=origin_seed,
-            data_seed=origin_seed,
+            train_seed=baseline_train_seed,
+            data_seed=baseline_data_seed,
             subset_strategy="stratified",
             subset_fraction=subset_fraction,
             hidden_dims=base_hidden_dims,
@@ -165,8 +191,8 @@ def _factorized_specs(config: dict, origin_seed: int) -> list[dict]:
         _mlp_spec(
             origin_seed=origin_seed,
             comparison_block="seed",
-            train_seed=seed,
-            data_seed=origin_seed,
+            train_seed=_origin_stream_seed(config, origin_seed, stream=2, local_seed=seed),
+            data_seed=baseline_data_seed,
             subset_strategy="stratified",
             subset_fraction=subset_fraction,
             hidden_dims=base_hidden_dims,
@@ -178,8 +204,8 @@ def _factorized_specs(config: dict, origin_seed: int) -> list[dict]:
         _mlp_spec(
             origin_seed=origin_seed,
             comparison_block="bootstrap",
-            train_seed=origin_seed,
-            data_seed=seed,
+            train_seed=_origin_stream_seed(config, origin_seed, stream=3, local_seed=seed),
+            data_seed=_origin_stream_seed(config, origin_seed, stream=4, local_seed=seed),
             subset_strategy="bootstrap",
             subset_fraction=subset_fraction,
             hidden_dims=base_hidden_dims,
@@ -191,8 +217,8 @@ def _factorized_specs(config: dict, origin_seed: int) -> list[dict]:
         _mlp_spec(
             origin_seed=origin_seed,
             comparison_block="architecture_activation",
-            train_seed=origin_seed,
-            data_seed=origin_seed,
+            train_seed=_origin_stream_seed(config, origin_seed, stream=5, local_seed=0),
+            data_seed=baseline_data_seed,
             subset_strategy="stratified",
             subset_fraction=subset_fraction,
             hidden_dims=hidden_dims,
@@ -205,7 +231,12 @@ def _factorized_specs(config: dict, origin_seed: int) -> list[dict]:
     if training_config.get("xgboost", {}).get("enabled", False):
         xgboost_seeds = training_config["xgboost"].get("seeds", comparison_seeds)
         specs.extend(
-            _xgboost_spec(origin_seed=origin_seed, train_seed=int(seed), subset_fraction=subset_fraction)
+            _xgboost_spec(
+                origin_seed=origin_seed,
+                train_seed=_origin_stream_seed(config, origin_seed, stream=6, local_seed=int(seed)),
+                data_seed=baseline_data_seed,
+                subset_fraction=subset_fraction,
+            )
             for seed in xgboost_seeds
         )
     return specs
@@ -514,6 +545,15 @@ def run_training(
     config["run_dir"] = str(_resolve_run_dir(config, origin_seed))
     config["training"] = dict(config["training"])
     config["training"]["origin_seed"] = origin_seed
+    config["dataset"] = dict(config["dataset"])
+    if config["training"].get("seed_schedule") == "origin_disjoint":
+        base_split_seed = int(config["dataset"].get("split_seed", 42))
+        config["dataset"]["split_seed"] = _origin_stream_seed(
+            config,
+            origin_seed,
+            stream=8,
+            local_seed=base_split_seed,
+        )
 
     run_dir = Path(config["run_dir"])
     run_dir.mkdir(parents=True, exist_ok=True)

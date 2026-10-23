@@ -15,10 +15,13 @@ that this is validation, not final-test, accuracy before any final paper claim.
 
 ## Origin-level aggregation
 
-Unit of analysis: independent origin run. Values below are means over ten
-origins; the interval is a percentile 95% bootstrap CI over origin means
-(2,000 resamples). Model pairs and test points were not used as independent
-replications.
+Descriptive unit of aggregation: origin run. Values below are means over ten
+origins; model pairs and test points were not used as independent replications.
+The reported percentile 95% bootstrap intervals over origin means are
+exploratory only: the factorized runs partially overlap because they reuse
+comparison seeds and a fixed train/validation split, so the origins are not
+independent replication units. They must not be used for conventional
+replication-based inference.
 
 | Dataset | Rashomon models | Ambiguity | Mean decision disagreement | Mean SHAP cosine distance | Top-10 SHAP Jaccard | Sign instability |
 |---|---:|---:|---:|---:|---:|---:|

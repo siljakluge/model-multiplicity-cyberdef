@@ -83,10 +83,10 @@ python -m mmcyber.cli explain-disagree --run-dir runs/nslkdd_multiplicity_seed1 
 python -m mmcyber.cli plot --run-dir runs/nslkdd_multiplicity_seed1 --top-n 20
 ```
 
-The default config uses a factorized design around one `origin_seed`. Results,
-model IDs, and run folders are named with that seed so repeated experiments are
-directly comparable and can later feed significance tests. To switch the anchor
-seed for one run:
+The default config runs the ten configured `origin_seeds` (1--10). Each origin
+gets disjoint reproducible streams for dataset splitting, model training, and
+bootstrap resampling; its resolved configuration and `training_plan.csv` record
+the resulting seeds. To run only one origin:
 
 ```bash
 python -m mmcyber.cli train --config configs/default.yaml --origin-seed 7
@@ -184,8 +184,9 @@ paper without manual renaming.
 Useful knobs:
 
 - `seeds`: changes initialization, data loader order, and subset sampling
-- `origin_seed`: stable anchor for naming runs and grouping repeated experiments
-- `comparison_seeds`: alternate seeds used for seed-variation, bootstrap, and optional XGBoost comparison runs
+- `origin_seed`: stable anchor for naming a single run; `origin_seeds` selects the full repeated experiment
+- `seed_schedule: origin_disjoint`: derives non-overlapping split, training, and bootstrap seed streams for each origin
+- `comparison_seeds`: local comparison indices; with `origin_disjoint` they are mapped to origin-specific seeds
 - `subset_fractions`: trains models on random fractions of the training set
 - `factorized_subset_fraction`: training fraction used by the factorized design
 - `hidden_dims_variants`: trains multiple network-size variants within the same experiment

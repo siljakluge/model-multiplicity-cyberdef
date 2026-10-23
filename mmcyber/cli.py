@@ -41,6 +41,7 @@ def main() -> None:
     train_parser.add_argument("--hidden-dims-variants", nargs="*")
     train_parser.add_argument("--activation-variants", nargs="*")
     train_parser.add_argument("--origin-seed", type=int)
+    train_parser.add_argument("--origin-seeds", nargs="*", type=int)
 
     disagree_parser = subparsers.add_parser("disagree")
     disagree_parser.add_argument("--run-dir", required=True)
@@ -77,14 +78,20 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "train":
         config = load_config(args.config)
-        run_training(
-            config,
-            seeds=args.seeds,
-            subset_fractions=args.subset_fractions,
-            hidden_dims_variants=_parse_hidden_dims_variants(args.hidden_dims_variants),
-            activation_variants=_parse_activation_variants(args.activation_variants),
-            origin_seed=args.origin_seed,
+        origin_seeds = (
+            [args.origin_seed]
+            if args.origin_seed is not None
+            else args.origin_seeds or config["training"].get("origin_seeds") or [None]
         )
+        for origin_seed in origin_seeds:
+            run_training(
+                config,
+                seeds=args.seeds,
+                subset_fractions=args.subset_fractions,
+                hidden_dims_variants=_parse_hidden_dims_variants(args.hidden_dims_variants),
+                activation_variants=_parse_activation_variants(args.activation_variants),
+                origin_seed=origin_seed,
+            )
     elif args.command == "disagree":
         compute_disagreement(
             args.run_dir,
