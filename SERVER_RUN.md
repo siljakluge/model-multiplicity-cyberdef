@@ -23,8 +23,15 @@ export HTTP_PROXY="$HTTPS_PROXY"
 export NO_PROXY=localhost,127.0.0.1
 ```
 
-First validate server networking and CUDA with a smoke run. Do not launch the
-full job until it succeeds:
+First run the non-training preflight. It downloads or loads each of the five
+datasets, validates preprocessing and all 10-origin/63-model plans, and writes
+only temporary preprocessor files. It must pass before launching the full job:
+
+```bash
+python -m mmcyber.cli preflight
+```
+
+Optionally validate server networking and CUDA with a small model smoke run:
 
 ```bash
 python -m mmcyber.cli run-all --config configs/adult_smoke.yaml --rashomon-tolerance 1.0 --max-background 8 --max-explain 8 --aggregate-out-dir runs/aggregate_adult_smoke
@@ -34,15 +41,21 @@ python -m mmcyber.cli run-all --config configs/bank_marketing_smoke.yaml --rasho
 ## Full experiments
 
 Each command runs origins 1--10, writes one directory per origin, and resumes
-safely when rerun unchanged. Use `tmux`, `screen`, or the company scheduler.
+safely when rerun unchanged. Use the tmux launcher below (or the company
+scheduler). It creates a detached `mmcyber-full` session and a timestamped log
+under `runs/logs/`.
 
 ```bash
-python -m mmcyber.cli run-all --config configs/default.yaml --rashomon-tolerance 0.015 --max-background 128 --max-explain 256 --aggregate-out-dir runs/aggregate_nslkdd
-python -m mmcyber.cli run-all --config configs/folktables_income_full.yaml --rashomon-tolerance 0.015 --max-background 128 --max-explain 256 --aggregate-out-dir runs/aggregate_acsincome_ca2018
-python -m mmcyber.cli run-all --config configs/folktables_employment_full.yaml --rashomon-tolerance 0.015 --max-background 128 --max-explain 256 --aggregate-out-dir runs/aggregate_acsemployment_ca2018
-python -m mmcyber.cli run-all --config configs/adult_full.yaml --rashomon-tolerance 0.015 --max-background 128 --max-explain 256 --aggregate-out-dir runs/aggregate_adult
-python -m mmcyber.cli run-all --config configs/bank_marketing_full.yaml --rashomon-tolerance 0.015 --max-background 128 --max-explain 256 --aggregate-out-dir runs/aggregate_bank_marketing
+# Includes preflight, then runs NSL-KDD, ACSIncome, ACSEmployment, Adult, and Bank Marketing.
+bash scripts/start_full_run_tmux.sh
+
+# Monitor over SSH; detach without stopping the job with Ctrl-b, then d.
+tmux attach -t mmcyber-full
 ```
+
+The launcher refuses to start a second session with the same name. Select one
+explicitly when needed: `MMCYBER_TMUX_SESSION=mmcyber-rerun bash
+scripts/start_full_run_tmux.sh`.
 
 The unchanged factorized plan is 63 MLPs/origin: 630 models/dataset and 3,150
 training runs across these five datasets. `device: auto` selects CUDA when

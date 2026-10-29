@@ -1,5 +1,40 @@
 # Model Multiplicity for Cyber Defense
 
+## Server full-run quick start
+
+On a Linux server, clone the repository, create the environment, then use the
+single full-run script below. It first runs a non-training preflight which loads
+and validates all five datasets (downloading missing official files through the
+configured proxy if necessary), checks every 10-origin/63-model plan, and leaves
+no output in `runs/`. Only if that succeeds does it launch the five full runs:
+10 origins × 63 MLPs × 5 datasets = **3,150 training runs**. CUDA is selected
+automatically when available; rerunning the script resumes identical jobs.
+
+```bash
+git clone https://github.com/siljakluge/model-multiplicity-cyberdef.git
+cd model-multiplicity-cyberdef
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e . --no-deps
+
+# Checks NSL-KDD, ACSIncome, ACSEmployment, Adult, and Bank Marketing first;
+# then starts all five complete 10-origin runs in a detached tmux session.
+bash scripts/start_full_run_tmux.sh
+
+# Follow the run or its logfile from another SSH connection.
+tmux attach -t mmcyber-full
+# Detach without stopping it: Ctrl-b, then d
+```
+
+To run only the non-training check, use `python -m mmcyber.cli preflight`.
+If the server needs an HTTP(S) proxy, export `HTTP_PROXY`, `HTTPS_PROXY`, and
+(where needed) `NO_PROXY` before the preflight. The full five-dataset checklist,
+aggregation, and backup commands are in [SERVER_RUN.md](SERVER_RUN.md).
+The tmux launcher writes its output under `runs/logs/`; set
+`MMCYBER_TMUX_SESSION=my-session` to choose a different session name.
+
 This is a test for studying model multiplicity in intrusion detection. It trains many neural classifiers on the same task, varies random seeds, training data, joint network-size/activation choices, and training-subset fractions, then measures:
 
 - prediction disagreement, ambiguity, and pointwise conflict ratios between similarly good models

@@ -18,6 +18,7 @@ from mmcyber.reevaluate import reconstruct_validation_metrics
 from mmcyber.shap_analysis import compute_shap
 from mmcyber.aggregate import aggregate_runs
 from mmcyber.data import PreparedData, prepare_dataset
+from mmcyber.preflight import FULL_CONFIGS, preflight_full_configs
 
 
 class ReliabilityTests(unittest.TestCase):
@@ -95,6 +96,20 @@ class ReliabilityTests(unittest.TestCase):
             self.assertEqual(config["dataset"]["name"], dataset_name)
             self.assertEqual(config["training"]["origin_seeds"], list(range(1, 11)))
             self.assertEqual(len(_factorized_specs(config, 1)), 63)
+
+    def test_full_server_preflight_checks_all_datasets_without_training(self):
+        prepared = PreparedData(
+            x_train=np.zeros((8, 2), dtype=np.float32), x_val=np.zeros((4, 2), dtype=np.float32),
+            x_test=np.zeros((4, 2), dtype=np.float32), y_train=np.array([0, 1] * 4),
+            y_val=np.array([0, 1, 0, 1]), y_test=np.array([0, 1, 0, 1]),
+            feature_names=["f1", "f2"], class_names=["negative", "positive"], preprocessor=None,
+        )
+        with patch("mmcyber.preflight.prepare_dataset", return_value=prepared) as prepare:
+            self.assertEqual(
+                preflight_full_configs(FULL_CONFIGS),
+                ["nsl_kdd", "ACSIncome", "ACSEmployment", "adult", "bank_marketing"],
+            )
+        self.assertEqual(prepare.call_count, 5)
 
     def test_validation_rashomon_selection_and_aggregation(self):
         with tempfile.TemporaryDirectory() as tmp:
