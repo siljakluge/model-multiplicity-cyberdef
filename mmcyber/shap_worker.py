@@ -39,22 +39,6 @@ def _torch_model_metadata(path: Path) -> dict:
     }
 
 
-def _load_joblib_model(path: Path):
-    artifact = joblib.load(path)
-    return artifact["model"]
-
-
-def _joblib_model_metadata(path: Path) -> dict:
-    artifact = joblib.load(path)
-    return {
-        "architecture_id": artifact.get("architecture_id", "xgboost"),
-        "hidden_dims_label": artifact.get("hidden_dims_label", "none"),
-        "activation": artifact.get("activation", "none"),
-        "seed": artifact.get("train_seed"),
-        "subset_fraction": artifact.get("subset_fraction"),
-    }
-
-
 def _normalize_shap_values(values: np.ndarray, n_classes: int) -> np.ndarray:
     if values.ndim == 2:
         return values[np.newaxis, ...]
@@ -69,21 +53,6 @@ def _normalize_shap_values(values: np.ndarray, n_classes: int) -> np.ndarray:
     if values.shape[1] == n_classes:
         return np.moveaxis(values, 1, 0)
     raise ValueError(f"Could not align SHAP output shape {values.shape} to {n_classes} classes")
-
-
-def _xgboost_shap_values(model, explain_data: np.ndarray, n_classes: int) -> np.ndarray:
-    import xgboost as xgb
-
-    contributions = model.get_booster().predict(xgb.DMatrix(explain_data), pred_contribs=True)
-    values = np.asarray(contributions)
-    if values.ndim == 2:
-        positive_values = values[:, :-1]
-        if n_classes == 2:
-            return np.stack([-positive_values, positive_values], axis=0)
-        return positive_values[np.newaxis, ...]
-    if values.ndim == 3:
-        return np.moveaxis(values[:, :, :-1], 1, 0)
-    raise ValueError(f"Unsupported XGBoost SHAP output shape: {values.shape} for {n_classes} classes")
 
 
 def run_worker(payload_path: str | Path, result_path: str | Path) -> None:
@@ -102,20 +71,15 @@ def run_worker(payload_path: str | Path, result_path: str | Path) -> None:
     x_train = dataset["x_train"]
     x_test = dataset["x_test"]
 
-    if model_path.suffix == ".pt":
-        device = resolve_device(payload.get("device", "auto"))
-        model = _load_torch_model(model_path, device)
-        metadata = _torch_model_metadata(model_path)
-        background = torch.from_numpy(x_train[background_idx]).to(device)
-        explain = torch.from_numpy(x_test[explain_idx]).to(device)
-        explainer = shap.DeepExplainer(model, background)
-        values = np.asarray(explainer.shap_values(explain))
-    elif model_path.suffix == ".joblib":
-        model = _load_joblib_model(model_path)
-        metadata = _joblib_model_metadata(model_path)
-        values = _xgboost_shap_values(model, x_test[explain_idx], len(class_names))
-    else:
-        raise ValueError(f"Unsupported model artifact {model_path}")
+    if model_path.suffix != ".pt":
+        raise ValueError(f"Only PyTorch MLP checkpoints are supported: {model_path}")
+    device = resolve_device(payload.get("device", "auto"))
+    model = _load_torch_model(model_path, device)
+    metadata = _torch_model_metadata(model_path)
+    background = torch.from_numpy(x_train[background_idx]).to(device)
+    explain = torch.from_numpy(x_test[explain_idx]).to(device)
+    explainer = shap.DeepExplainer(model, background)
+    values = np.asarray(explainer.shap_values(explain))
 
     class_first_values = _normalize_shap_values(np.asarray(values), len(class_names))
     summary_rows = []

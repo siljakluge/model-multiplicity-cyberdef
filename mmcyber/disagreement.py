@@ -116,6 +116,8 @@ def compute_disagreement(
         right = metric_lookup.loc[model_b]
         differing_factors = _difference_signature(left, right)
         source_factor = differing_factors[0] if len(differing_factors) == 1 else "combined"
+        if source_factor == "subset_fraction":
+            source_factor = "subset"
         rows.append(
             {
                 "model_a": model_a,

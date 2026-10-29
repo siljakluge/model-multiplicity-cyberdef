@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import os
+import hashlib
+import json
 from pathlib import Path
-import subprocess
-import sys
-import tempfile
 
 import joblib
 import numpy as np
@@ -30,9 +28,13 @@ def _activation_variants(config: dict) -> list[str]:
 
 def _comparison_seeds(config: dict, origin_seed: int) -> list[int]:
     seeds = config["training"].get("comparison_seeds")
-    if seeds:
-        return [int(seed) for seed in seeds if int(seed) != origin_seed]
-    return [int(seed) for seed in config["training"].get("seeds", []) if int(seed) != origin_seed]
+    if not seeds:
+        seeds = config["training"].get("seeds", [])
+    # With origin-disjoint streams, the local seed equal to origin_seed is not
+    # the baseline seed. Do not silently drop one comparison in origins 2..10.
+    if config["training"].get("seed_schedule") == "origin_disjoint":
+        return [int(seed) for seed in seeds]
+    return [int(seed) for seed in seeds if int(seed) != origin_seed]
 
 
 def _origin_stream_seed(config: dict, origin_seed: int, stream: int, local_seed: int = 0) -> int:
@@ -105,9 +107,19 @@ def _build_model_id(spec: dict) -> str:
         parts.append(f"train_seed{spec['train_seed']}")
     elif spec["comparison_block"] == "bootstrap":
         parts.append(f"resample_seed{spec['data_seed']}")
+    elif spec["comparison_block"] == "subset":
+        parts.append(f"fraction_{str(spec['subset_fraction']).replace('.', 'p')}")
     elif spec["comparison_block"] == "architecture_activation":
         parts.append(spec["architecture_id"])
         parts.append(f"act_{spec['activation']}")
+    elif spec["comparison_block"] == "grid":
+        parts.extend([
+            f"train_seed{spec['train_seed']}",
+            f"data_seed{spec['data_seed']}",
+            f"fraction_{str(spec['subset_fraction']).replace('.', 'p')}",
+            spec["architecture_id"],
+            f"act_{spec['activation']}",
+        ])
     return "_".join(parts)
 
 
@@ -144,24 +156,6 @@ def _mlp_spec(
         "activation": activation,
         "architecture_id": f"arch_{_hidden_dims_label(list(hidden_dims))}",
         "hidden_dims_label": _hidden_dims_label(list(hidden_dims)),
-    }
-    spec["model_id"] = _build_model_id(spec)
-    return spec
-
-
-def _xgboost_spec(origin_seed: int, train_seed: int, data_seed: int, subset_fraction: float) -> dict:
-    spec = {
-        "origin_seed": origin_seed,
-        "comparison_block": "xgboost",
-        "model_family": "xgboost",
-        "train_seed": train_seed,
-        "data_seed": data_seed,
-        "subset_strategy": "stratified",
-        "subset_fraction": subset_fraction,
-        "hidden_dims": [],
-        "activation": "none",
-        "architecture_id": "xgboost",
-        "hidden_dims_label": "none",
     }
     spec["model_id"] = _build_model_id(spec)
     return spec
@@ -228,17 +222,24 @@ def _factorized_specs(config: dict, origin_seed: int) -> list[dict]:
         for activation in _activation_variants(config)
         if not (list(hidden_dims) == base_hidden_dims and activation == base_activation)
     )
-    if training_config.get("xgboost", {}).get("enabled", False):
-        xgboost_seeds = training_config["xgboost"].get("seeds", comparison_seeds)
-        specs.extend(
-            _xgboost_spec(
-                origin_seed=origin_seed,
-                train_seed=_origin_stream_seed(config, origin_seed, stream=6, local_seed=int(seed)),
-                data_seed=baseline_data_seed,
-                subset_fraction=subset_fraction,
-            )
-            for seed in xgboost_seeds
+    # Isolate training-subset size while holding model initialization fixed.
+    specs.extend(
+        _mlp_spec(
+            origin_seed=origin_seed,
+            comparison_block="subset",
+            train_seed=baseline_train_seed,
+            data_seed=baseline_data_seed,
+            subset_strategy="stratified",
+            subset_fraction=float(fraction),
+            hidden_dims=base_hidden_dims,
+            activation=base_activation,
         )
+        for fraction in training_config.get("subset_fractions", [subset_fraction])
+        if float(fraction) != subset_fraction
+    )
+    ids = [spec["model_id"] for spec in specs]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Duplicate model IDs in factorized experiment plan")
     return specs
 
 
@@ -292,66 +293,6 @@ def _write_training_artifacts(
     pd.DataFrame(all_metrics).to_csv(run_dir / "metrics.csv", index=False)
     pd.concat(prediction_frames, ignore_index=True).to_csv(run_dir / "test_predictions.csv", index=False)
     pd.Series(data.class_names, name="class_name").to_csv(run_dir / "class_names.csv", index=False)
-
-
-def _xgboost_dataset_cache_path(run_dir: Path) -> Path:
-    return run_dir / "xgboost_dataset.joblib"
-
-
-def _ensure_xgboost_dataset_cache(run_dir: Path, data: PreparedData) -> Path:
-    cache_path = _xgboost_dataset_cache_path(run_dir)
-    if cache_path.exists():
-        cached = joblib.load(cache_path)
-        if {"x_val", "y_val"}.issubset(cached):
-            return cache_path
-    joblib.dump(
-        {
-            "x_train": data.x_train,
-            "x_val": data.x_val,
-            "y_train": data.y_train,
-            "y_val": data.y_val,
-            "x_test": data.x_test,
-            "y_test": data.y_test,
-            "class_names": data.class_names,
-        },
-        cache_path,
-    )
-    return cache_path
-
-
-def _xgboost_payload(run_dir: Path, spec: dict, data: PreparedData, config: dict) -> dict:
-    training_config = config["training"]
-    xgb_config = training_config.get("xgboost", {})
-    subset_idx = _training_subset(
-        data,
-        float(spec["subset_fraction"]),
-        int(spec["data_seed"]),
-        str(spec["subset_strategy"]),
-    )[2]
-    params = {
-        "n_estimators": int(xgb_config.get("n_estimators", 200)),
-        "max_depth": int(xgb_config.get("max_depth", 6)),
-        "learning_rate": float(xgb_config.get("learning_rate", 0.1)),
-        "subsample": float(xgb_config.get("subsample", 1.0)),
-        "colsample_bytree": float(xgb_config.get("colsample_bytree", 1.0)),
-        "reg_lambda": float(xgb_config.get("reg_lambda", 1.0)),
-        "random_state": int(spec["train_seed"]),
-        "n_jobs": int(xgb_config.get("n_jobs", 1)),
-        "tree_method": xgb_config.get("tree_method", "hist"),
-        "eval_metric": "mlogloss" if len(data.class_names) > 2 else "logloss",
-    }
-    if len(data.class_names) > 2:
-        params["objective"] = "multi:softprob"
-        params["num_class"] = len(data.class_names)
-    else:
-        params["objective"] = "binary:logistic"
-    return {
-        "dataset_path": str(_ensure_xgboost_dataset_cache(run_dir, data)),
-        "subset_idx": subset_idx,
-        "params": params,
-        "spec": spec,
-        "model_path": str(run_dir / "models" / f"{spec['model_id']}.joblib"),
-    }
 
 
 def train_one_model(
@@ -418,7 +359,7 @@ def train_one_model(
             # Keep the best validation checkpoint instead of the final epoch so
             # all models are compared at their strongest observed state.
             best_val_loss = val_loss
-            best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
+            best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
             stale_epochs = 0
         else:
             stale_epochs += 1
@@ -483,55 +424,6 @@ def train_one_model(
     }
 
 
-def train_one_xgboost(
-    data: PreparedData,
-    config: dict,
-    *,
-    model_id: str,
-    origin_seed: int,
-    train_seed: int,
-    data_seed: int,
-    subset_fraction: float,
-    subset_strategy: str,
-    comparison_block: str,
-    run_dir: Path,
-) -> dict:
-    spec = {
-        "model_id": model_id,
-        "origin_seed": origin_seed,
-        "comparison_block": comparison_block,
-        "model_family": "xgboost",
-        "train_seed": train_seed,
-        "data_seed": data_seed,
-        "subset_strategy": subset_strategy,
-        "subset_fraction": subset_fraction,
-        "hidden_dims": [],
-        "activation": "none",
-        "architecture_id": "xgboost",
-        "hidden_dims_label": "none",
-    }
-    payload = _xgboost_payload(run_dir, spec, data, config)
-    env = os.environ.copy()
-    env.setdefault("OMP_NUM_THREADS", "1")
-    env.setdefault("MKL_NUM_THREADS", "1")
-    with tempfile.TemporaryDirectory(prefix="mmcyber-xgb-") as tmp_dir:
-        payload_path = Path(tmp_dir) / "payload.joblib"
-        result_path = Path(tmp_dir) / "result.joblib"
-        joblib.dump(payload, payload_path)
-        completed = subprocess.run(
-            [sys.executable, "-m", "mmcyber.xgboost_worker", "--payload", str(payload_path), "--result", str(result_path)],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        if completed.returncode != 0:
-            stderr = completed.stderr.strip()
-            stdout = completed.stdout.strip()
-            details = stderr or stdout or f"worker exited with code {completed.returncode}"
-            raise RuntimeError(f"XGBoost worker failed for {model_id}: {details}")
-        return joblib.load(result_path)
-
-
 def run_training(
     config: dict,
     seeds: list[int] | None = None,
@@ -545,6 +437,17 @@ def run_training(
     config["run_dir"] = str(_resolve_run_dir(config, origin_seed))
     config["training"] = dict(config["training"])
     config["training"]["origin_seed"] = origin_seed
+    config["training"].pop("xgboost", None)  # MLP-only experimental design
+    if seeds is not None:
+        config["training"]["seeds"] = seeds
+        config["training"]["comparison_seeds"] = seeds
+    if subset_fractions is not None:
+        config["training"]["subset_fractions"] = subset_fractions
+    if hidden_dims_variants is not None:
+        config["training"]["hidden_dims_variants"] = hidden_dims_variants
+        config["training"]["architecture_variants"] = hidden_dims_variants
+    if activation_variants is not None:
+        config["training"]["activation_variants"] = activation_variants
     config["dataset"] = dict(config["dataset"])
     if config["training"].get("seed_schedule") == "origin_disjoint":
         base_split_seed = int(config["dataset"].get("split_seed", 42))
@@ -557,9 +460,28 @@ def run_training(
 
     run_dir = Path(config["run_dir"])
     run_dir.mkdir(parents=True, exist_ok=True)
-    save_json(config, run_dir / "config.resolved.json")
+    resolved_path = run_dir / "config.resolved.json"
+    if resolved_path.exists():
+        previous = json.loads(resolved_path.read_text(encoding="utf-8"))
+        if previous != config:
+            raise ValueError(
+                f"Existing run directory {run_dir} uses a different resolved config. "
+                "Choose a new run_dir instead of mixing incompatible datasets/model artifacts."
+            )
+    save_json(config, resolved_path)
 
     data = prepare_dataset(config, run_dir)
+    # Detect source data / preprocessing changes even when config is identical.
+    fingerprint_path = run_dir / "dataset_fingerprint.json"
+    digest = hashlib.sha256()
+    for array in (data.x_train, data.y_train, data.x_val, data.y_val, data.x_test, data.y_test):
+        digest.update(np.ascontiguousarray(array).view(np.uint8).tobytes())
+    fingerprint = {"sha256": digest.hexdigest()}
+    if fingerprint_path.exists():
+        previous_fp = json.loads(fingerprint_path.read_text(encoding="utf-8"))
+        if previous_fp != fingerprint:
+            raise ValueError("Dataset changed for an existing run directory; choose a new run_dir.")
+    save_json(fingerprint, fingerprint_path)
 
     all_metrics = []
     prediction_frames = []
@@ -592,39 +514,43 @@ def run_training(
                             )
                         )
 
+    planned_ids = [spec["model_id"] for spec in specs]
+    if len(planned_ids) != len(set(planned_ids)):
+        raise ValueError("Duplicate model IDs in training plan; refusing to overwrite checkpoints")
     pd.DataFrame(specs).to_csv(run_dir / "training_plan.csv", index=False)
+    result_dir = run_dir / "model_results"
+    result_dir.mkdir(parents=True, exist_ok=True)
     for spec in tqdm(specs, desc="models"):
-        if spec["model_family"] == "xgboost":
-            result = train_one_xgboost(
-                data,
-                config,
-                model_id=spec["model_id"],
-                origin_seed=spec["origin_seed"],
-                train_seed=spec["train_seed"],
-                data_seed=spec["data_seed"],
-                subset_fraction=spec["subset_fraction"],
-                subset_strategy=spec["subset_strategy"],
-                comparison_block=spec["comparison_block"],
-                run_dir=run_dir,
-            )
+        result_file = result_dir / f"{spec['model_id']}.joblib"
+        model_file = run_dir / "models" / f"{spec['model_id']}.pt"
+        if result_file.exists() and model_file.exists():
+            try:
+                result = joblib.load(result_file)
+                if result.get("model_id") != spec["model_id"] or "pred" not in result or "probs" not in result:
+                    raise ValueError("invalid model result cache")
+            except (OSError, EOFError, ValueError):
+                result = None
         else:
+            result = None
+        if result is None:
             result = train_one_model(
-                data,
-                config,
-                spec["train_seed"],
-                spec["data_seed"],
-                spec["subset_fraction"],
-                spec["subset_strategy"],
-                spec["hidden_dims"],
-                spec["activation"],
-                spec["architecture_id"],
-                spec["model_id"],
-                spec["origin_seed"],
-                spec["comparison_block"],
-                run_dir,
+                data, config, spec["train_seed"], spec["data_seed"],
+                spec["subset_fraction"], spec["subset_strategy"],
+                spec["hidden_dims"], spec["activation"], spec["architecture_id"],
+                spec["model_id"], spec["origin_seed"], spec["comparison_block"], run_dir,
             )
-        probs = result.pop("probs")
-        pred = result.pop("pred")
-        all_metrics.append(result)
-        prediction_frames.append(_prediction_frame(spec, data, pred, probs))
-        _write_training_artifacts(run_dir, data, all_metrics, prediction_frames)
+            temporary_file = result_file.with_suffix(".joblib.tmp")
+            joblib.dump(result, temporary_file)
+            temporary_file.replace(result_file)
+        metrics = {k: v for k, v in result.items() if k not in {"pred", "probs"}}
+        all_metrics.append(metrics)
+        # Stream predictions instead of retaining all model frames in RAM or
+        # rewriting a quadratic-size CSV after every model.
+        prediction_file = run_dir / "test_predictions.csv"
+        _prediction_frame(spec, data, result["pred"], result["probs"]).to_csv(
+            prediction_file,
+            mode="w" if len(all_metrics) == 1 else "a",
+            header=len(all_metrics) == 1,
+            index=False,
+        )
+        pd.DataFrame(all_metrics).to_csv(run_dir / "metrics.csv", index=False)

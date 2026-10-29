@@ -62,22 +62,6 @@ def _evaluate_mlp(model_path: Path, dataset: dict, device: torch.device, batch_s
     }
 
 
-def _evaluate_xgboost(model_path: Path, dataset: dict) -> dict[str, float]:
-    artifact = joblib.load(model_path)
-    model = artifact["model"]
-    val_pred, val_probs = model.predict(dataset["x_val"]), model.predict_proba(dataset["x_val"])
-    test_pred, test_probs = model.predict(dataset["x_test"]), model.predict_proba(dataset["x_test"])
-    labels = list(range(len(dataset["class_names"])))
-    return {
-        "val_accuracy": accuracy_score(dataset["y_val"], val_pred),
-        "val_macro_f1": f1_score(dataset["y_val"], val_pred, average="macro"),
-        "val_log_loss": log_loss(dataset["y_val"], val_probs, labels=labels),
-        "recomputed_test_accuracy": accuracy_score(dataset["y_test"], test_pred),
-        "recomputed_test_macro_f1": f1_score(dataset["y_test"], test_pred, average="macro"),
-        "recomputed_test_log_loss": log_loss(dataset["y_test"], test_probs, labels=labels),
-    }
-
-
 def reconstruct_validation_metrics(run_dir: str | Path, batch_size: int = 1024, device_name: str = "auto") -> pd.DataFrame:
     """Add validation metrics by evaluating the already saved model artifacts.
 
@@ -94,12 +78,15 @@ def reconstruct_validation_metrics(run_dir: str | Path, batch_size: int = 1024, 
         model_path = run_path / "models" / Path(str(row["model_path"])).name
         if not model_path.exists():
             raise FileNotFoundError(f"Missing model artifact {model_path}.")
-        values = _evaluate_xgboost(model_path, dataset) if model_path.suffix == ".joblib" else _evaluate_mlp(
-            model_path, dataset, device, batch_size
-        )
+        if model_path.suffix != ".pt":
+            raise ValueError(f"Only MLP checkpoints are supported: {model_path}")
+        values = _evaluate_mlp(model_path, dataset, device, batch_size)
         values["model_id"] = row["model_id"]
         rows.append(values)
     reconstructed = pd.DataFrame(rows)
+    # Safe on repeated calls: replace previously reconstructed columns instead
+    # of producing val_accuracy_x/val_accuracy_y suffixes.
+    metrics = metrics.drop(columns=[c for c in reconstructed.columns if c != "model_id"], errors="ignore")
     result = metrics.merge(reconstructed, on="model_id", validate="one_to_one")
     result.to_csv(metrics_path, index=False)
     return result

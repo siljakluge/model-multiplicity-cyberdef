@@ -66,7 +66,15 @@ def compute_explanation_disagreement(run_dir: str | Path, top_k: int = 20) -> No
                 }
             )
 
-    pd.DataFrame(rows).to_csv(run_path / "explanation_disagreement.csv", index=False)
+    pairwise = pd.DataFrame(rows, columns=[
+        "class_name", "model_a", "model_b", "mean_abs_shap_cosine_distance", "top_k", "top_k_jaccard"
+    ])
+    pairwise.to_csv(run_path / "explanation_disagreement.csv", index=False)
+    pd.DataFrame([{
+        "n_explanation_pairs": len(pairwise),
+        "mean_abs_shap_cosine_distance": float(pairwise["mean_abs_shap_cosine_distance"].mean()),
+        "mean_top_k_jaccard": float(pairwise["top_k_jaccard"].mean()),
+    }]).to_csv(run_path / "explanation_multiplicity_summary.csv", index=False)
 
     shap_values_path = run_path / "shap_values_long.csv.gz"
     sample_disagreement_path = run_path / "sample_disagreement.csv"
@@ -129,3 +137,9 @@ def compute_shap_variability(run_dir: str | Path) -> None:
             }
         )
     pd.DataFrame(correlation_rows).to_csv(run_path / "shap_variability_correlations.csv", index=False)
+    pd.DataFrame([{
+        "n_shap_sample_feature_groups": len(variability),
+        "mean_sign_instability": float(variability["sign_instability"].mean()),
+        "mean_shap_range": float(variability["shap_value_range"].mean()),
+        "mean_shap_variance": float(variability["shap_value_variance"].mean()),
+    }]).to_csv(run_path / "shap_variability_summary.csv", index=False)

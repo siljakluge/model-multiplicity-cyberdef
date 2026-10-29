@@ -43,6 +43,16 @@ def main() -> None:
     train_parser.add_argument("--origin-seed", type=int)
     train_parser.add_argument("--origin-seeds", nargs="*", type=int)
 
+    all_parser = subparsers.add_parser("run-all", help="Run all stages per origin and optionally aggregate")
+    all_parser.add_argument("--config", required=True)
+    all_parser.add_argument("--origin-seeds", nargs="*", type=int)
+    all_parser.add_argument("--rashomon-tolerance", type=float, default=0.015)
+    all_parser.add_argument("--max-background", type=int, default=128)
+    all_parser.add_argument("--max-explain", type=int, default=256)
+    all_parser.add_argument("--only-conflicts", action="store_true")
+    all_parser.add_argument("--top-k", type=int, default=20)
+    all_parser.add_argument("--aggregate-out-dir")
+
     disagree_parser = subparsers.add_parser("disagree")
     disagree_parser.add_argument("--run-dir", required=True)
     disagree_parser.add_argument("--rashomon-tolerance", type=float, default=0.015)
@@ -92,6 +102,21 @@ def main() -> None:
                 activation_variants=_parse_activation_variants(args.activation_variants),
                 origin_seed=origin_seed,
             )
+    elif args.command == "run-all":
+        config = load_config(args.config)
+        origin_seeds = args.origin_seeds or config["training"].get("origin_seeds") or [config["training"].get("origin_seed", 1)]
+        run_dirs = []
+        for origin_seed in origin_seeds:
+            run_dir = str(config["run_dir"]).format(origin_seed=origin_seed)
+            run_training(config, origin_seed=origin_seed)
+            compute_disagreement(run_dir, rashomon_tolerance=args.rashomon_tolerance)
+            compute_shap(run_dir, max_background=args.max_background,
+                         max_explain=args.max_explain, only_conflicts=args.only_conflicts)
+            compute_explanation_disagreement(run_dir, top_k=args.top_k)
+            plot_all(run_dir, top_n=args.top_k)
+            run_dirs.append(run_dir)
+        if args.aggregate_out_dir:
+            aggregate_runs(run_dirs, args.aggregate_out_dir)
     elif args.command == "disagree":
         compute_disagreement(
             args.run_dir,

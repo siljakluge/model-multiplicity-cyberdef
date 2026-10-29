@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import gzip
+import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,11 +14,11 @@ import numpy as np
 import pandas as pd
 
 from mmcyber.data import PreparedData, prepare_dataset
-from mmcyber.utils import load_config
+from mmcyber.utils import load_config, save_json
 
 
 def _iter_model_artifacts(models_dir: Path) -> list[Path]:
-    return sorted(path for path in models_dir.glob("*") if path.suffix in {".pt", ".joblib"})
+    return sorted(models_dir.glob("*.pt"))
 
 
 def _rashomon_model_paths(run_path: Path, model_paths: list[Path]) -> list[Path]:
@@ -40,7 +43,9 @@ def _rashomon_model_paths(run_path: Path, model_paths: list[Path]) -> list[Path]
 
 def _select_explain_indices(run_path: Path, n_test: int, max_explain: int, seed: int, only_conflicts: bool) -> np.ndarray:
     rng = np.random.default_rng(seed)
-    if only_conflicts and (run_path / "sample_disagreement.csv").exists():
+    if only_conflicts:
+        if not (run_path / "sample_disagreement.csv").exists():
+            raise FileNotFoundError("Run `mmcyber disagree` before requesting conflict-only SHAP.")
         sample_disagreement = pd.read_csv(run_path / "sample_disagreement.csv")
         if "is_conflict" in sample_disagreement.columns:
             conflict_ids = sample_disagreement.loc[sample_disagreement["is_conflict"].astype(bool), "sample_id"].to_numpy()
@@ -50,6 +55,7 @@ def _select_explain_indices(run_path: Path, n_test: int, max_explain: int, seed:
             conflict_ids = np.array([], dtype=int)
         if len(conflict_ids):
             return rng.choice(conflict_ids, size=min(max_explain, len(conflict_ids)), replace=False)
+        raise ValueError("No predictive conflicts in the selected Rashomon set; omit --only-conflicts or revise tolerance.")
     return rng.choice(n_test, size=min(max_explain, n_test), replace=False)
 
 
@@ -66,8 +72,7 @@ def _shap_dataset_cache_path(run_dir: Path) -> Path:
 
 def _ensure_shap_dataset_cache(run_dir: Path, data: PreparedData) -> Path:
     cache_path = _shap_dataset_cache_path(run_dir)
-    if cache_path.exists():
-        return cache_path
+    # Always refresh: the data split or preprocessor may have changed.
     joblib.dump(
         {
             "x_train": data.x_train,
@@ -144,44 +149,57 @@ def compute_shap(
     dataset_path = _ensure_shap_dataset_cache(run_path, data)
 
     shap_dir = run_path / "shap_values"
+    cache_dir = run_path / "shap_results"
+    manifest_path = run_path / "shap_manifest.json"
+    manifest = {
+        "schema_version": 2,
+        "resolved_config": config,
+        "selected_model_ids": [path.stem for path in model_paths],
+        "background_indices": background_idx.tolist(),
+        "explain_indices": explain_idx.tolist(),
+    }
+    if manifest_path.exists() and json.loads(manifest_path.read_text(encoding="utf-8")) != manifest:
+        shutil.rmtree(shap_dir, ignore_errors=True)
+        shutil.rmtree(cache_dir, ignore_errors=True)
     shap_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    save_json(manifest, manifest_path)
     summary_rows = []
-    value_rows = []
-    skipped_models = []
+    values_path = run_path / "shap_values_long.csv.gz"
     device_name = str(config.get("training", {}).get("device", "auto"))
-
-    for model_path in model_paths:
-        if model_path.suffix not in {".pt", ".joblib"}:
-            skipped_models.append(model_path.name)
-            continue
-        result = _compute_model_shap(
-            _shap_worker_payload(
-                run_dir=run_path,
-                model_path=model_path,
-                dataset_path=dataset_path,
-                background_idx=background_idx,
-                explain_idx=explain_idx,
-                device_name=device_name,
-            )
-        )
-        class_first_values = np.asarray(result["shap_values"])
-
-        np.savez_compressed(
-            shap_dir / f"{model_path.stem}.npz",
-            shap_values=class_first_values,
-            sample_indices=np.asarray(result["sample_indices"], dtype=np.int64),
-            feature_names=np.array(data.feature_names),
-            class_names=np.array(data.class_names),
-        )
-        summary_rows.extend(result["summary_rows"])
-        value_rows.extend(result["value_rows"])
-
-    skipped_models.extend(
-        path.name for path in models_dir.glob("*") if path.suffix not in {".pt", ".joblib"}
-    )
-    skipped_models = sorted(set(skipped_models))
-    if skipped_models:
-        pd.DataFrame({"skipped_model_artifact": skipped_models}).to_csv(run_path / "shap_skipped_models.csv", index=False)
+    with gzip.open(values_path, "wt", encoding="utf-8", newline="") as stream:
+        for i, model_path in enumerate(model_paths):
+            result_file = cache_dir / f"{model_path.stem}.joblib"
+            npz_file = shap_dir / f"{model_path.stem}.npz"
+            if result_file.exists() and npz_file.exists():
+                try:
+                    result = joblib.load(result_file)
+                    if result.get("model_id") != model_path.stem:
+                        raise ValueError("SHAP cache belongs to another model")
+                except (OSError, EOFError, ValueError):
+                    result = None
+            else:
+                result = None
+            if result is None:
+                result = _compute_model_shap(
+                    _shap_worker_payload(
+                        run_dir=run_path, model_path=model_path, dataset_path=dataset_path,
+                        background_idx=background_idx, explain_idx=explain_idx,
+                        device_name=device_name,
+                    )
+                )
+                class_first_values = np.asarray(result["shap_values"])
+                np.savez_compressed(
+                    npz_file,
+                    shap_values=class_first_values,
+                    sample_indices=np.asarray(result["sample_indices"], dtype=np.int64),
+                    feature_names=np.array(data.feature_names),
+                    class_names=np.array(data.class_names),
+                )
+                temporary_file = result_file.with_suffix(".joblib.tmp")
+                joblib.dump(result, temporary_file)
+                temporary_file.replace(result_file)
+            summary_rows.extend(result["summary_rows"])
+            pd.DataFrame(result["value_rows"]).to_csv(stream, index=False, header=i == 0)
 
     pd.DataFrame(summary_rows).to_csv(run_path / "shap_summary.csv", index=False)
-    pd.DataFrame(value_rows).to_csv(run_path / "shap_values_long.csv.gz", index=False)

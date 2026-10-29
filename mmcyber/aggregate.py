@@ -61,7 +61,7 @@ def aggregate_runs(
         )
 
     origin_table = pd.DataFrame(records).sort_values(["dataset", "origin_seed", "run_dir"])
-    numeric_columns = origin_table.select_dtypes(include="number").columns
+    numeric_columns = origin_table.select_dtypes(include="number").columns.drop("origin_seed", errors="ignore")
     rng = np.random.default_rng(seed)
     summaries: list[dict] = []
     for dataset, group in origin_table.groupby("dataset", sort=True):

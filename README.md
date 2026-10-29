@@ -1,6 +1,6 @@
 # Model Multiplicity for Cyber Defense
 
-This is a test for studying model multiplicity in intrusion detection. It trains many neural classifiers on the same task, varies random seeds, training data, joint network-size/activation choices, and XGBoost baselines, then measures:
+This is a test for studying model multiplicity in intrusion detection. It trains many neural classifiers on the same task, varies random seeds, training data, joint network-size/activation choices, and training-subset fractions, then measures:
 
 - prediction disagreement, ambiguity, and pointwise conflict ratios between similarly good models
 - accuracy/F1 variability
@@ -129,12 +129,11 @@ The NSL-KDD files are downloaded automatically into `data/raw/nsl-kdd/` on the f
 `runs/nslkdd_multiplicity_seed1/`
 
 - `models/*.pt`: trained PyTorch models
-- `models/*.joblib`: trained XGBoost comparison models
 - `preprocessor.joblib`: fitted preprocessing pipeline
 - `training_plan.csv`: explicit per-model experiment plan anchored to the origin seed
 - `test_predictions.csv`: per-model predictions and probabilities
 - `metrics.csv`: model-level metrics
-- `disagreement_by_factor.csv`: pairwise disagreement aggregated by factor blocks such as `seed`, `bootstrap`, `architecture_activation`, `xgboost`, or `combined`
+- `disagreement_by_factor.csv`: pairwise disagreement aggregated by factor blocks such as `seed`, `bootstrap`, `architecture_activation`, or `combined`
 - `rashomon_by_source.csv`: counts and fractions of Rashomon-set models per multiplicity source
 - `multiplicity_summary.csv`: Rashomon-set size, ambiguity, mean/max conflict ratio, mean/max pairwise disagreement
 - `disagreement_summary.csv`: pairwise disagreement between models in the Rashomon set
@@ -157,7 +156,7 @@ The NSL-KDD files are downloaded automatically into `data/raw/nsl-kdd/` on the f
 - `macro_f1_by_architecture`: average macro-F1 trend across network-size variants
 - `macro_f1_by_activation`: average macro-F1 trend across activation variants
 - `decision_disagreement_heatmap`: pairwise prediction disagreement
-- `disagreement_by_factor`: direct comparison of how much `seed`, `bootstrap resampling`, joint `network size + activation`, and `xgboost` contribute to disagreement
+- `disagreement_by_factor`: direct comparison of how much `seed`, `bootstrap resampling`, joint `network size + activation`,  contribute to disagreement
 - `rashomon_by_source`: how many models per multiplicity source actually ended up in the Rashomon set
 - `multiplicity_summary`: ambiguity/conflict/disagreement overview
 - `conflict_ratio`: pointwise predictive multiplicity distribution
@@ -193,9 +192,35 @@ Useful knobs:
 - `architecture_variants`: defines the network sizes crossed with all activation variants in the joint architecture-activation block
 - `activation_variants`: defines the activation functions crossed with all architecture variants in the joint architecture-activation block
 - `subset_strategy`: `stratified` for ordinary subsets; bootstrap resampling is used automatically in the bootstrap comparison block
-- `training.xgboost.*`: controls the XGBoost comparison block
 - `task`: `binary` maps attacks vs normal; `multiclass` keeps attack categories
 - `--rashomon-tolerance`: defines which models count as similarly good, using `best(metric) - tolerance`
 - `--only-conflicts`: computes SHAP on datapoints with `conflict_ratio > 0`, matching the Bachelorarbeit-style analysis
 
 Started with binary classification. Multiclass works but needs more care when comparing explanations across rare classes.
+
+## Reliable MLP-only full runs
+
+XGBoost is disabled and is not installed as a project dependency. The
+`factorized` experiment now includes a controlled training-subset block
+and gives every origin the same number of comparison seeds. The default
+configuration specifies **63 MLP models per origin**, or **630 across ten origins**.
+
+Use a fresh output directory (edit `run_dir` in your config) when changing
+training settings. The runner refuses to mix incompatible configurations.
+After interruptions, repeating the identical command reuses completed
+per-model training and SHAP artifacts. Model result caches live in
+`model_results/*.joblib`, SHAP worker caches in `shap_results/*.joblib`.
+
+```bash
+python -m mmcyber.cli run-all --config configs/default.yaml \
+  --origin-seeds 1 --rashomon-tolerance 0.015 \
+  --max-background 32 --max-explain 32 \
+  --aggregate-out-dir runs/aggregate_mlp
+```
+
+Test one origin first. Then remove `--origin-seeds 1` and adjust the SHAP
+budget to run all origins. `--only-conflicts` requires at least one conflict;
+it does not silently fall back to non-conflict samples. For an isolated
+smoke run, use `configs/smoke.yaml` and the small SHAP budgets from above.
+
+Run offline unit tests using `python -m unittest discover -s tests -v`.
