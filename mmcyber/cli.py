@@ -7,6 +7,7 @@ from mmcyber.explanation_disagreement import compute_explanation_disagreement
 from mmcyber.aggregate import aggregate_runs
 from mmcyber.reevaluate import reconstruct_validation_metrics
 from mmcyber.plotting import plot_all
+from mmcyber.preflight import preflight_full_configs
 from mmcyber.shap_analysis import compute_shap
 from mmcyber.train import run_training
 from mmcyber.utils import load_config
@@ -85,6 +86,11 @@ def main() -> None:
     reevaluate_parser.add_argument("--batch-size", type=int, default=1024)
     reevaluate_parser.add_argument("--device", default="auto")
 
+    subparsers.add_parser(
+        "preflight",
+        help="Download/load all full datasets and validate all 10-origin plans without training",
+    )
+
     args = parser.parse_args()
     if args.command == "train":
         config = load_config(args.config)
@@ -138,6 +144,8 @@ def main() -> None:
         aggregate_runs(args.run_dirs, args.out_dir, n_bootstrap=args.n_bootstrap, seed=args.seed)
     elif args.command == "reevaluate":
         reconstruct_validation_metrics(args.run_dir, batch_size=args.batch_size, device_name=args.device)
+    elif args.command == "preflight":
+        preflight_full_configs()
 
 
 if __name__ == "__main__":
