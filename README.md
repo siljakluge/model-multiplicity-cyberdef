@@ -224,3 +224,44 @@ it does not silently fall back to non-conflict samples. For an isolated
 smoke run, use `configs/smoke.yaml` and the small SHAP budgets from above.
 
 Run offline unit tests using `python -m unittest discover -s tests -v`.
+
+## Supported datasets and data cache
+
+The supported dataset identifiers are `nsl_kdd`, `folktables` (including
+`ACSIncome` and `ACSEmployment`), `adult`, and `bank_marketing`. Adult uses
+the official UCI [adult.data and adult.test](https://archive.ics.uci.edu/dataset/2/adult)
+files and preserves their official train/test split; validation is a stratified
+split of training data. Bank Marketing uses the official UCI
+[bank.zip](https://archive.ics.uci.edu/dataset/222/bank+marketing) archive and
+extracts only `bank-full.csv` (45,211 rows), never the 10% sample or
+`bank-additional-full.csv`. It makes a reproducible 64/16/20 train/validation/test split.
+
+First use downloads and caches originals under `data/raw/adult/` and
+`data/raw/bank-marketing/`; reruns work offline when those files exist. Python's
+standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` variables are honoured.
+If a download fails, set the proxy correctly or copy the untouched official file
+into that cache path; TLS validation is never disabled.
+
+Missing numeric values are median-imputed and scaled; missing categorical values
+are most-frequent-imputed and one-hot encoded. Transformers are fitted only on
+the training partition. `unknown` is a legitimate Bank Marketing category and
+is retained rather than silently replaced. Bank's `duration` is retained only
+for the stated retrospective multiplicity analysis: it is known after a call
+and therefore would be leakage for a prospective pre-call deployment model.
+
+## Adult and Bank Marketing commands
+
+Run a one-origin end-to-end smoke test (including SHAP and aggregation):
+
+```bash
+python -m mmcyber.cli run-all --config configs/adult_smoke.yaml --rashomon-tolerance 1.0 --max-background 8 --max-explain 8 --aggregate-out-dir runs/aggregate_adult_smoke
+python -m mmcyber.cli run-all --config configs/bank_marketing_smoke.yaml --rashomon-tolerance 1.0 --max-background 8 --max-explain 8 --aggregate-out-dir runs/aggregate_bank_marketing_smoke
+```
+
+For the full ten-origin experiments, use `configs/adult_full.yaml` and
+`configs/bank_marketing_full.yaml`. Both retain the factorized MLP-only design
+(63 models/origin), origin-disjoint seed streams, 20 epochs, patience 5, and
+validation-accuracy Rashomon selection (`0.015`). Each origin writes into its
+own `runs/<dataset>_multiplicity_seed<origin>/` directory. Repeat an identical
+command after interruption to resume validated model and SHAP caches; use a new
+`run_dir` whenever the configuration or data changes.

@@ -17,7 +17,7 @@ from mmcyber.explanation_disagreement import compute_explanation_disagreement
 from mmcyber.reevaluate import reconstruct_validation_metrics
 from mmcyber.shap_analysis import compute_shap
 from mmcyber.aggregate import aggregate_runs
-from mmcyber.data import PreparedData
+from mmcyber.data import PreparedData, prepare_dataset
 
 
 class ReliabilityTests(unittest.TestCase):
@@ -43,6 +43,58 @@ class ReliabilityTests(unittest.TestCase):
                         values.append(_build_model_id(dict(origin_seed=1,comparison_block='grid',model_family='mlp',
                             train_seed=seed,data_seed=seed,subset_fraction=fraction,architecture_id='arch_'+dims,activation=act)))
         self.assertEqual(len(values),len(set(values)))
+
+    def test_adult_fixture_parsing_splits_and_no_preprocessor_leakage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = Path(tmp) / "adult"; raw.mkdir()
+            rows = []
+            for i in range(40):
+                income = ">50K" if i % 2 else "<=50K"
+                workclass = "?" if i == 0 else ("Private" if i % 3 else "State-gov")
+                rows.append(f"{20+i}, {workclass}, {1000+i}, Bachelors, 13, Never-married, Tech-support, Not-in-family, White, Male, 0, 0, 40, United-States, {income}")
+            (raw / "adult.data").write_text("\n".join(rows), encoding="utf-8")
+            test_rows = [row.replace(", >50K", ", >50K.").replace(", <=50K", ", <=50K.") for row in rows[:20]]
+            (raw / "adult.test").write_text("| official comment\n" + "\n".join(test_rows), encoding="utf-8")
+            config = {"dataset": {"name": "adult", "raw_dir": str(raw), "split_seed": 7,
+                                  "validation_size": 0.2, "validate_full_size": False}}
+            first = prepare_dataset(config, Path(tmp) / "run1")
+            second = prepare_dataset(config, Path(tmp) / "run2")
+            self.assertEqual(first.class_names, ["<=50K", ">50K"])
+            self.assertEqual(first.x_train.shape, second.x_train.shape)
+            self.assertTrue(np.array_equal(first.y_train, second.y_train))
+            self.assertEqual(set(np.unique(first.y_test)), {0, 1})
+            self.assertFalse(np.isnan(first.x_train).any())
+            # 'Mexico' exists only in the held-out fixture rows and therefore
+            # must not be fitted as a one-hot category.
+            self.assertFalse(any("native_country_Mexico" in name for name in first.feature_names))
+
+    def test_bank_fixture_parsing_split_and_unknown_category(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = Path(tmp) / "bank-marketing"; raw.mkdir()
+            columns = ["age", "job", "marital", "education", "default", "balance", "housing", "loan", "contact", "day", "month", "duration", "campaign", "pdays", "previous", "poutcome", "y"]
+            values = []
+            for i in range(100):
+                values.append([20 + i % 50, "unknown" if i == 0 else "admin.", "single", "secondary", "no",
+                               i * 10, "yes", "no", "cellular", 1 + i % 28, "may", 100 + i,
+                               1, -1, 0, "unknown", "yes" if i % 5 == 0 else "no"])
+            pd.DataFrame(values, columns=columns).to_csv(raw / "bank-full.csv", sep=";", index=False)
+            config = {"dataset": {"name": "bank_marketing", "raw_dir": str(raw), "split_seed": 11,
+                                  "test_size": 0.2, "validation_size": 0.2, "validate_full_size": False}}
+            first = prepare_dataset(config, Path(tmp) / "run1")
+            second = prepare_dataset(config, Path(tmp) / "run2")
+            self.assertEqual(first.class_names, ["no", "yes"])
+            self.assertEqual((len(first.y_train), len(first.y_val), len(first.y_test)), (64, 16, 20))
+            self.assertTrue(np.array_equal(first.y_val, second.y_val))
+            self.assertTrue(any(name == "num__duration" for name in first.feature_names))
+            self.assertTrue(any("cat__job_unknown" in name for name in first.feature_names))
+            self.assertFalse(np.isnan(first.x_train).any())
+
+    def test_new_full_configs_have_ten_origins_and_63_models(self):
+        for filename, dataset_name in [("adult_full.yaml", "adult"), ("bank_marketing_full.yaml", "bank_marketing")]:
+            config = yaml.safe_load(Path("configs", filename).read_text(encoding="utf-8"))
+            self.assertEqual(config["dataset"]["name"], dataset_name)
+            self.assertEqual(config["training"]["origin_seeds"], list(range(1, 11)))
+            self.assertEqual(len(_factorized_specs(config, 1)), 63)
 
     def test_validation_rashomon_selection_and_aggregation(self):
         with tempfile.TemporaryDirectory() as tmp:
