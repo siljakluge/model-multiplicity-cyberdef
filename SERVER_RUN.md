@@ -41,12 +41,21 @@ python -m mmcyber.cli run-all --config configs/bank_marketing_smoke.yaml --rasho
 ## Full experiments
 
 Each command runs origins 1--10, writes one directory per origin, and resumes
-safely when rerun unchanged. Use `tmux`, `screen`, or the company scheduler.
+safely when rerun unchanged. Use the tmux launcher below (or the company
+scheduler). It creates a detached `mmcyber-full` session and a timestamped log
+under `runs/logs/`.
 
 ```bash
 # Includes preflight, then runs NSL-KDD, ACSIncome, ACSEmployment, Adult, and Bank Marketing.
-bash scripts/run_all_full_datasets.sh
+bash scripts/start_full_run_tmux.sh
+
+# Monitor over SSH; detach without stopping the job with Ctrl-b, then d.
+tmux attach -t mmcyber-full
 ```
+
+The launcher refuses to start a second session with the same name. Select one
+explicitly when needed: `MMCYBER_TMUX_SESSION=mmcyber-rerun bash
+scripts/start_full_run_tmux.sh`.
 
 The unchanged factorized plan is 63 MLPs/origin: 630 models/dataset and 3,150
 training runs across these five datasets. `device: auto` selects CUDA when

@@ -20,14 +20,20 @@ python -m pip install -r requirements.txt
 python -m pip install -e . --no-deps
 
 # Checks NSL-KDD, ACSIncome, ACSEmployment, Adult, and Bank Marketing first;
-# then starts all five complete 10-origin runs.
-bash scripts/run_all_full_datasets.sh
+# then starts all five complete 10-origin runs in a detached tmux session.
+bash scripts/start_full_run_tmux.sh
+
+# Follow the run or its logfile from another SSH connection.
+tmux attach -t mmcyber-full
+# Detach without stopping it: Ctrl-b, then d
 ```
 
 To run only the non-training check, use `python -m mmcyber.cli preflight`.
 If the server needs an HTTP(S) proxy, export `HTTP_PROXY`, `HTTPS_PROXY`, and
 (where needed) `NO_PROXY` before the preflight. The full five-dataset checklist,
 aggregation, and backup commands are in [SERVER_RUN.md](SERVER_RUN.md).
+The tmux launcher writes its output under `runs/logs/`; set
+`MMCYBER_TMUX_SESSION=my-session` to choose a different session name.
 
 This is a test for studying model multiplicity in intrusion detection. It trains many neural classifiers on the same task, varies random seeds, training data, joint network-size/activation choices, and training-subset fractions, then measures:
 
